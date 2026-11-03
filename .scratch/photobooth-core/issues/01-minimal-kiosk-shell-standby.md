@@ -4,10 +4,15 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The desktop application launches into full-screen mode covering all system taskbars with `Topmost` set to true.
-- [ ] A low-level keyboard hook blocks `Alt+Tab`, `Alt+F4`, and the Windows Start key in production mode.
-- [ ] The frontend renders an animated Standby screen with invitation text and brand artwork.
-- [ ] Tapping anywhere on the Standby screen transitions smoothly into an active session view.
-- [ ] Pressing `Esc` in debug mode terminates the application cleanly.
+- [x] The desktop application launches into full-screen mode covering all system taskbars with `Topmost` set to true.
+- [x] A low-level keyboard hook blocks `Alt+Tab`, `Alt+F4`, and the Windows Start key in production mode.
+- [x] The frontend renders an animated Standby screen with invitation text and brand artwork.
+- [x] Tapping anywhere on the Standby screen transitions smoothly into an active session view.
+- [x] Pressing `Esc` in debug mode terminates the application cleanly.
+
+**Implementation Summary:**
+- Implemented in `PhotoBooth.Host` via `MainWindow.xaml` (`WindowStyle="None" WindowState="Maximized" Topmost="True"`).
+- Installed low-level Win32 keyboard hook in `KeyboardHook.cs` intercepting Alt+Tab, Alt+F4, WinKey, with Esc toggling fullscreen.
+- Touchscreen attract loop and 5-tap secret Admin PIN trigger implemented in React `StandbyScreen.tsx`.

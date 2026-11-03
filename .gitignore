@@ -1,0 +1,22 @@
+# .NET Build artifacts
+bin/
+obj/
+*.user
+*.suo
+
+# Node & Frontend Build artifacts
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# OS files
+Thumbs.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# Temporary SQLite & Runtime data
+*.db-wal
+*.db-shm
+heartbeat.txt
