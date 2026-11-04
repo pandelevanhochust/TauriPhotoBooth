@@ -23,18 +23,24 @@ type EventListener<T = any> = (data: T) => void;
 class IpcBridge {
   private pendingRequests = new Map<string, { resolve: (val: any) => void; reject: (err: any) => void }>();
   private eventListeners = new Map<string, Set<EventListener>>();
-  private isWebView2Available: boolean = false;
+  private initializedWebView2Listener: boolean = false;
 
   constructor() {
-    this.isWebView2Available = typeof window !== 'undefined' && !!(window as any).chrome?.webview;
+    this.ensureListener();
+  }
 
-    if (this.isWebView2Available) {
+  private ensureListener() {
+    if (typeof window !== 'undefined' && (window as any).chrome?.webview && !this.initializedWebView2Listener) {
       (window as any).chrome.webview.addEventListener('message', (event: any) => {
         this.handleIncomingMessage(event.data);
       });
-    } else {
-      console.warn('[IPC] Running in browser mock mode. WebView2 bridge not detected.');
+      this.initializedWebView2Listener = true;
     }
+  }
+
+  private get isWebView2Available(): boolean {
+    this.ensureListener();
+    return typeof window !== 'undefined' && !!(window as any).chrome?.webview;
   }
 
   private handleIncomingMessage(raw: any) {
@@ -81,9 +87,36 @@ class IpcBridge {
     };
 
     if (this.isWebView2Available) {
-      return new Promise<TResult>((resolve, reject) => {
-        this.pendingRequests.set(id, { resolve, reject });
-        (window as any).chrome.webview.postMessage(JSON.stringify(request));
+      return new Promise<TResult>((resolve) => {
+        // Fallback safety timeout: never hang the kiosk UI
+        const timer = setTimeout(() => {
+          if (this.pendingRequests.has(id)) {
+            console.warn(`[IPC] Command '${command}' timeout after 4s. Using fallback mock.`);
+            this.pendingRequests.delete(id);
+            resolve(this.handleMockCommand<TResult>(command, payload));
+          }
+        }, 4000);
+
+        this.pendingRequests.set(id, {
+          resolve: (val) => {
+            clearTimeout(timer);
+            resolve(val);
+          },
+          reject: (err) => {
+            clearTimeout(timer);
+            console.warn(`[IPC] Command '${command}' failed, using fallback:`, err);
+            resolve(this.handleMockCommand<TResult>(command, payload));
+          },
+        });
+
+        try {
+          (window as any).chrome.webview.postMessage(JSON.stringify(request));
+        } catch (e) {
+          console.error('[IPC] postMessage error:', e);
+          clearTimeout(timer);
+          this.pendingRequests.delete(id);
+          resolve(this.handleMockCommand<TResult>(command, payload));
+        }
       });
     } else {
       // Browser Mock Responses for local UI development

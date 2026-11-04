@@ -1,32 +1,50 @@
 import React, { useState, useEffect } from 'react';
-import { StandbyScreen } from './components/StandbyScreen';
-import { LayoutSelectionScreen } from './components/LayoutSelectionScreen';
-import type { LayoutConfig } from './components/LayoutSelectionScreen';
-import { LiveViewScreen } from './components/LiveViewScreen';
-import { ReviewScreen } from './components/ReviewScreen';
-import { ComposingAndPrintScreen } from './components/ComposingAndPrintScreen';
+import { FavoriWelcomeScreen } from './components/favori/FavoriWelcomeScreen';
+import { FavoriSizeScreen } from './components/favori/FavoriSizeScreen';
+import type { PhotoSizeType } from './components/favori/FavoriSizeScreen';
+import { FavoriFrameScreen } from './components/favori/FavoriFrameScreen';
+import { FavoriQuantityScreen } from './components/favori/FavoriQuantityScreen';
+import { FavoriModeScreen } from './components/favori/FavoriModeScreen';
+import type { CaptureMode } from './components/favori/FavoriModeScreen';
+import { FavoriCountdownScreen } from './components/favori/FavoriCountdownScreen';
+import { FavoriLiveViewScreen } from './components/favori/FavoriLiveViewScreen';
+import { FavoriFilterScreen } from './components/favori/FavoriFilterScreen';
+import { FavoriPhotoSelectScreen } from './components/favori/FavoriPhotoSelectScreen';
+import { FavoriPrintScreen } from './components/favori/FavoriPrintScreen';
 import { AdminModal } from './components/AdminModal';
 import { ipc } from './services/ipc';
 
-export type KioskStep = 'standby' | 'layout' | 'capture' | 'review' | 'composing';
+export type FavoriStep =
+  | 'welcome'     // 1.png
+  | 'size'        // 2.png (Bước 1/11)
+  | 'frame'       // 3.png (Bước 2/11)
+  | 'quantity'    // 4.png (Bước 3/11)
+  // Step 4/11 (5.png - Thanh toán) is skipped as requested
+  | 'mode'        // 6.png (Bước 5/11)
+  | 'countdown'   // 7.png (Bước 6/11)
+  | 'liveview'    // 8.png (Bước 7/11)
+  | 'filter'      // 9.png (Bước 8/11)
+  | 'photoSelect' // 10.png (Bước 9/11)
+  | 'print';      // 11.png (Bước 10/11)
 
 export const App: React.FC = () => {
-  const [step, setStep] = useState<KioskStep>('standby');
+  const [step, setStep] = useState<FavoriStep>('welcome');
+  const [language, setLanguage] = useState<'vi' | 'en'>('vi');
   const [paperCount, setPaperCount] = useState<number>(350);
   const [kioskMode, setKioskMode] = useState<string>('FreeEvent');
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
 
-  // Session State
-  const [layoutConfig, setLayoutConfig] = useState<LayoutConfig>({
-    type: 'strip2x6',
-    frameCount: 4,
-    frameColor: '#ffffff',
-    frameTheme: 'white',
-  });
-  const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
+  // Session Options State
+  const [selectedSize, setSelectedSize] = useState<PhotoSizeType>('strip2x6');
+  const [selectedFrame, setSelectedFrame] = useState<string>('classic-cream');
+  const [quantity, setQuantity] = useState<number>(2);
+  const [captureMode, setCaptureMode] = useState<CaptureMode>('autoCountdown');
+  const [selectedFilter, setSelectedFilter] = useState<string>('vintage');
   const [beautifyEnabled, setBeautifyEnabled] = useState<boolean>(true);
+  const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
+  const [retakeTargetIndex, setRetakeTargetIndex] = useState<number | null>(null);
 
-  // Initial load kiosk status from host
+  // Fetch initial kiosk status from backend
   useEffect(() => {
     ipc.invoke<{ paperCount: number; mode: string }>('get_kiosk_status')
       .then((status) => {
@@ -38,86 +56,162 @@ export const App: React.FC = () => {
       .catch((err) => console.log('Get kiosk status error:', err));
   }, []);
 
-  const handleStartSession = async () => {
-    try {
-      await ipc.invoke('start_capture_session');
-    } catch (e) {
-      console.warn('Start session notification:', e);
-    }
+  // Keyboard shortcut for technician admin access (Ctrl+Shift+A)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
+        setIsAdminOpen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleStartSession = () => {
+    ipc.invoke('start_capture_session').catch((e) => console.warn(e));
     setCapturedPhotos([]);
-    setStep('layout');
+    setRetakeTargetIndex(null);
+    setStep('size');
   };
 
-  const handleSelectLayout = (config: LayoutConfig) => {
-    setLayoutConfig(config);
-    setStep('capture');
-  };
-
-  const handleAllShotsCaptured = (photos: string[]) => {
-    setCapturedPhotos(photos);
-    setStep('review');
-  };
-
-  const handleRetakePhoto = (_indexToRetake: number) => {
-    // Return to capture for retake
-    setStep('capture');
-  };
-
-  const handleProceedToCompose = (beautify: boolean) => {
-    setBeautifyEnabled(beautify);
-    setStep('composing');
+  const handleRetakeShot = (retakeIndex: number) => {
+    setRetakeTargetIndex(retakeIndex);
+    setStep('liveview');
   };
 
   const handleFinishSession = () => {
     setCapturedPhotos([]);
-    setStep('standby');
+    setRetakeTargetIndex(null);
+    setQuantity(2);
+    setStep('welcome');
   };
 
   return (
-    <div className="w-screen h-screen overflow-hidden bg-black select-none">
-      {step === 'standby' && (
-        <StandbyScreen
-          onStartSession={handleStartSession}
+    <div className="w-screen h-screen overflow-hidden bg-[#f5f0ea] select-none">
+      {/* Step 0: Welcome Screen (1.png) */}
+      {step === 'welcome' && (
+        <FavoriWelcomeScreen
+          onStart={handleStartSession}
           onOpenAdmin={() => setIsAdminOpen(true)}
+          language={language}
+          onLanguageChange={setLanguage}
           paperCount={paperCount}
-          kioskMode={kioskMode}
         />
       )}
 
-      {step === 'layout' && (
-        <LayoutSelectionScreen
-          onSelectLayout={handleSelectLayout}
-          onCancel={() => setStep('standby')}
+      {/* Step 1/11: Chọn kích cỡ ảnh (2.png) */}
+      {step === 'size' && (
+        <FavoriSizeScreen
+          selectedSize={selectedSize}
+          onSelectSize={setSelectedSize}
+          onNext={() => setStep('frame')}
+          onBack={() => setStep('welcome')}
         />
       )}
 
-      {step === 'capture' && (
-        <LiveViewScreen
-          totalShots={layoutConfig.frameCount}
-          onAllShotsCaptured={handleAllShotsCaptured}
-          onCancel={() => setStep('standby')}
+      {/* Step 2/11: Chọn khung ảnh (3.png) */}
+      {step === 'frame' && (
+        <FavoriFrameScreen
+          selectedFrame={selectedFrame}
+          onSelectFrame={setSelectedFrame}
+          onNext={() => setStep('quantity')}
+          onBack={() => setStep('size')}
         />
       )}
 
-      {step === 'review' && (
-        <ReviewScreen
+      {/* Step 3/11: Chọn số lượng in & mã giảm giá (4.png) */}
+      {/* NOTE: Step 4/11 (Payment 5.png) is skipped -> Next goes directly to Step 5/11 (mode 6.png) */}
+      {step === 'quantity' && (
+        <FavoriQuantityScreen
+          quantity={quantity}
+          onQuantityChange={setQuantity}
+          pricePerUnit={50000}
+          isFreeMode={kioskMode === 'FreeEvent'}
+          onNext={() => setStep('mode')}
+          onBack={() => setStep('frame')}
+        />
+      )}
+
+      {/* Step 5/11: Chọn chế độ chụp (6.png) */}
+      {step === 'mode' && (
+        <FavoriModeScreen
+          selectedMode={captureMode}
+          onSelectMode={(m) => {
+            setCaptureMode(m);
+            setStep('countdown');
+          }}
+          onNext={() => setStep('countdown')}
+          onBack={() => setStep('quantity')}
+        />
+      )}
+
+      {/* Step 6/11: Chuẩn bị chụp (7.png) */}
+      {step === 'countdown' && (
+        <FavoriCountdownScreen
+          onReady={() => setStep('liveview')}
+        />
+      )}
+
+      {/* Step 7/11: Chụp ảnh & Live View (8.png) */}
+      {step === 'liveview' && (
+        <FavoriLiveViewScreen
+          totalShots={retakeTargetIndex !== null ? 1 : 4}
+          mode={captureMode}
+          onAllShotsCaptured={(newPhotos) => {
+            if (retakeTargetIndex !== null && newPhotos.length > 0) {
+              const updated = [...capturedPhotos];
+              updated[retakeTargetIndex] = newPhotos[0];
+              setCapturedPhotos(updated);
+              setRetakeTargetIndex(null);
+              setStep('photoSelect');
+            } else {
+              setCapturedPhotos(newPhotos);
+              setStep('filter');
+            }
+          }}
+          onCancel={() => setStep('welcome')}
+        />
+      )}
+
+      {/* Step 8/11: Chọn bộ lọc (9.png) */}
+      {step === 'filter' && (
+        <FavoriFilterScreen
+          photos={capturedPhotos}
+          selectedFilter={selectedFilter}
+          onSelectFilter={setSelectedFilter}
+          beautifyEnabled={beautifyEnabled}
+          onToggleBeautify={setBeautifyEnabled}
+          onNext={() => setStep('photoSelect')}
+          onBack={() => setStep('mode')}
+        />
+      )}
+
+      {/* Step 9/11: Chọn ảnh để in (10.png) */}
+      {step === 'photoSelect' && (
+        <FavoriPhotoSelectScreen
           photos={capturedPhotos}
           maxRetakes={1}
-          onRetakePhoto={handleRetakePhoto}
-          onProceedToCompose={handleProceedToCompose}
+          onRetake={handleRetakeShot}
+          onNext={() => setStep('print')}
+          onBack={() => setStep('filter')}
         />
       )}
 
-      {step === 'composing' && (
-        <ComposingAndPrintScreen
-          layout={layoutConfig}
+      {/* Step 10/11: In ảnh (11.png) */}
+      {/* NOTE: Step 11/11 (QR download 12.png) is skipped -> finishes and resets to Welcome */}
+      {step === 'print' && (
+        <FavoriPrintScreen
+          layoutType={selectedSize}
+          frameTheme={selectedFrame}
+          filterId={selectedFilter}
           beautifyEnabled={beautifyEnabled}
+          copies={quantity}
           photos={capturedPhotos}
-          onFinishSession={handleFinishSession}
+          onFinish={handleFinishSession}
         />
       )}
 
-      {/* Admin Modal */}
+      {/* Administrative PIN Modal */}
       <AdminModal
         isOpen={isAdminOpen}
         onClose={() => setIsAdminOpen(false)}

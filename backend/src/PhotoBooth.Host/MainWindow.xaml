@@ -12,6 +12,6 @@
         ShowInTaskbar="False"
         Background="Black">
     <Grid Background="Black">
-        <wv2:WebView2 Name="MainWebView" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+        <wv2:WebView2 Name="MainWebView" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" Focusable="True" />
     </Grid>
 </Window>

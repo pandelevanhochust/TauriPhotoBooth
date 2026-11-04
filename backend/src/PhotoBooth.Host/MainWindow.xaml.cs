@@ -137,6 +137,12 @@ public partial class MainWindow : Window
         MainWebView.CoreWebView2.NavigationCompleted += (s, args) =>
         {
             App.Log($"[INFO] NavigationCompleted. Success={args.IsSuccess}");
+            Dispatcher.Invoke(() =>
+            {
+                Activate();
+                Focus();
+                MainWebView.Focus();
+            });
             if (args.IsSuccess && _camera != null)
             {
                 _ = _camera.StartLiveViewAsync();
@@ -225,18 +231,33 @@ public partial class MainWindow : Window
         try
         {
             string json = e.WebMessageAsJson;
+            App.Log($"[IPC IN] {json}");
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            string id = root.GetProperty("id").GetString() ?? "";
-            string command = root.GetProperty("command").GetString() ?? "";
-            JsonElement payload = root.TryGetProperty("payload", out var p) ? p : default;
+            if (root.ValueKind == JsonValueKind.String)
+            {
+                string inner = root.GetString() ?? "";
+                using var innerDoc = JsonDocument.Parse(inner);
+                var innerRoot = innerDoc.RootElement.Clone();
+                string id = innerRoot.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+                string command = innerRoot.TryGetProperty("command", out var cmdProp) ? cmdProp.GetString() ?? "" : "";
+                JsonElement payload = innerRoot.TryGetProperty("payload", out var p) ? p.Clone() : default;
+                _ = HandleCommandAsync(id, command, payload);
+                return;
+            }
 
-            _ = HandleCommandAsync(id, command, payload);
+            if (root.ValueKind == JsonValueKind.Object)
+            {
+                string id = root.TryGetProperty("id", out var idProp) ? idProp.GetString() ?? "" : "";
+                string command = root.TryGetProperty("command", out var cmdProp) ? cmdProp.GetString() ?? "" : "";
+                JsonElement payload = root.TryGetProperty("payload", out var p) ? p.Clone() : default;
+                _ = HandleCommandAsync(id, command, payload);
+            }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[IPC Error] {ex}");
+            App.Log($"[ERROR] OnWebMessageReceived: {ex}");
         }
     }
 
