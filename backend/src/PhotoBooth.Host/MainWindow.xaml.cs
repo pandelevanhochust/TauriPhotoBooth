@@ -47,7 +47,9 @@ public partial class MainWindow : Window
     {
         try
         {
+            App.Log("[INFO] MainWindow_Loaded start");
             // 1. Install Low-Level Keyboard Hook for Kiosk Security
+            App.Log("[INFO] Step 1: Keyboard Hook");
             _keyboardHook = new KeyboardHook(allowEscapeToExit: true);
             _keyboardHook.EscapePressed += () =>
             {
@@ -69,46 +71,62 @@ public partial class MainWindow : Window
             };
 
             // 2. Initialize Core Services
+            App.Log("[INFO] Step 2: Core Services Init");
             string baseDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data");
             if (!Directory.Exists(baseDataDir)) Directory.CreateDirectory(baseDataDir);
 
             _paperCounter = new AtomicPaperCounter(Path.Combine(baseDataDir, "paper_counter.json"));
             await _paperCounter.InitializeAsync();
+            App.Log("[INFO] Step 2.1: Paper counter initialized");
 
             _printerService = new ThermalPrinterService(_paperCounter);
             _skiaCompositor = new NativeSkiaCompositor();
             _magickCompositor = new MagickCompositor();
             _dbService = new DatabaseService(Path.Combine(baseDataDir, "store.db"));
             await _dbService.InitializeAsync();
+            App.Log("[INFO] Step 2.2: DB initialized");
 
             // Start Watchdog Heartbeat
             _heartbeatFile = Path.Combine(baseDataDir, "heartbeat.txt");
             _heartbeatTimer = new System.Threading.Timer(_ =>
             {
-                try { File.WriteAllText(_heartbeatFile, DateTime.UtcNow.ToString("o")); } catch { }
+                try
+                {
+                    using var stream = new FileStream(_heartbeatFile, FileMode.Create, FileAccess.Write, FileShare.ReadWrite);
+                    using var writer = new StreamWriter(stream);
+                    writer.Write(DateTime.UtcNow.ToString("o"));
+                }
+                catch { }
             }, null, TimeSpan.Zero, TimeSpan.FromSeconds(2));
 
-            // 3. Initialize Camera
+            // 3. Initialize Camera (ready on demand)
+            App.Log("[INFO] Step 3: Camera Init");
             _camera = new MockCameraProvider();
             await _camera.InitializeAsync();
             _camera.FrameArrived += OnCameraFrameArrived;
-            await _camera.StartLiveViewAsync();
+            App.Log("[INFO] Step 3.1: Camera provider ready");
 
             // 4. Initialize WebView2
+            App.Log("[INFO] Step 4: WebView2 Init");
             await InitializeWebView2Async();
+            App.Log("[INFO] Step 4.1: WebView2 initialized successfully");
         }
         catch (Exception ex)
         {
+            App.Log($"[ERROR] MainWindow_Loaded exception: {ex}");
             MessageBox.Show($"Lỗi khởi tạo Kiosk: {ex.Message}", "HihiBooth Kiosk Error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
     private async Task InitializeWebView2Async()
     {
+        App.Log("[INFO] InitializeWebView2Async: Creating Environment");
         string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         string webViewDataFolder = Path.Combine(localAppData, "HihiBooth", "WebView2Data");
         var env = await CoreWebView2Environment.CreateAsync(null, webViewDataFolder);
+        App.Log("[INFO] InitializeWebView2Async: Ensuring CoreWebView2");
         await MainWebView.EnsureCoreWebView2Async(env);
+        App.Log("[INFO] InitializeWebView2Async: CoreWebView2 ready");
 
         // Security & Kiosk configurations
         MainWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
@@ -116,43 +134,78 @@ public partial class MainWindow : Window
         MainWebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
 
         MainWebView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+        MainWebView.CoreWebView2.NavigationCompleted += (s, args) =>
+        {
+            App.Log($"[INFO] NavigationCompleted. Success={args.IsSuccess}");
+            if (args.IsSuccess && _camera != null)
+            {
+                _ = _camera.StartLiveViewAsync();
+            }
+        };
 
-        // Try local Vite dev server first if running, otherwise use production dist
+        // Check if Vite dev server is running with non-blocking socket probe
         string devUrl = "http://localhost:5173";
         bool isDevRunning = false;
         try
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(500) };
-            var res = await client.GetAsync(devUrl);
-            isDevRunning = res.IsSuccessStatusCode;
+            using var tcp = new System.Net.Sockets.TcpClient();
+            var connectTask = tcp.ConnectAsync("127.0.0.1", 5173);
+            if (await Task.WhenAny(connectTask, Task.Delay(150)) == connectTask && tcp.Connected)
+            {
+                isDevRunning = true;
+            }
         }
         catch { }
 
         if (isDevRunning)
         {
+            App.Log($"[INFO] Navigating to DevUrl: {devUrl}");
             MainWebView.CoreWebView2.Navigate(devUrl);
         }
         else
         {
-            string distHtml = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "..", "ui", "dist", "index.html"));
-            if (File.Exists(distHtml))
+            string? distFolder = FindDistFolder();
+            App.Log($"[INFO] Found distFolder: '{distFolder}'");
+            if (!string.IsNullOrEmpty(distFolder) && Directory.Exists(distFolder))
             {
-                MainWebView.CoreWebView2.Navigate(distHtml);
+                MainWebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                    "app.hihibooth.local",
+                    distFolder,
+                    CoreWebView2HostResourceAccessKind.Allow);
+                App.Log("[INFO] SetVirtualHostNameToFolderMapping done. Navigating to https://app.hihibooth.local/index.html");
+                MainWebView.CoreWebView2.Navigate("https://app.hihibooth.local/index.html");
             }
             else
             {
-                // Fallback to local app directory
-                string localDist = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ui", "dist", "index.html");
-                if (File.Exists(localDist))
-                {
-                    MainWebView.CoreWebView2.Navigate(localDist);
-                }
-                else
-                {
-                    MainWebView.CoreWebView2.NavigateToString("<html><body style='background:#111;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;'><h1>HihiBooth Kiosk Ready. UI dist pending.</h1></body></html>");
-                }
+                App.Log("[WARN] distFolder not found. Navigating to fallback string");
+                MainWebView.CoreWebView2.NavigateToString("<html><body style='background:#111;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;'><h1>HihiBooth Kiosk Ready. UI dist pending.</h1></body></html>");
             }
         }
+    }
+
+    private static string? FindDistFolder()
+    {
+        // 1. Direct local path (production deployment)
+        string local = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ui", "dist");
+        if (Directory.Exists(local) && File.Exists(Path.Combine(local, "index.html"))) return local;
+
+        // 2. Search upwards up to 8 levels (development builds)
+        var dir = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+        for (int i = 0; i < 8 && dir != null; i++)
+        {
+            string candidate = Path.Combine(dir.FullName, "ui", "dist");
+            if (Directory.Exists(candidate) && File.Exists(Path.Combine(candidate, "index.html")))
+            {
+                return candidate;
+            }
+            dir = dir.Parent;
+        }
+
+        // 3. Workspace fallback
+        string abs = @"D:\WORK\TauriPhotoBooth\ui\dist";
+        if (Directory.Exists(abs) && File.Exists(Path.Combine(abs, "index.html"))) return abs;
+
+        return null;
     }
 
     private int _frameThrottle = 0;
@@ -357,8 +410,18 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            var res = new { id, success = true, data };
-            MainWebView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(res));
+            try
+            {
+                if (MainWebView?.CoreWebView2 != null)
+                {
+                    var res = new { id, success = true, data };
+                    MainWebView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(res));
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[WARN] SendSuccessResponse failed: {ex.Message}");
+            }
         });
     }
 
@@ -366,8 +429,18 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            var res = new { id, success = false, error };
-            MainWebView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(res));
+            try
+            {
+                if (MainWebView?.CoreWebView2 != null)
+                {
+                    var res = new { id, success = false, error };
+                    MainWebView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(res));
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[WARN] SendErrorResponse failed: {ex.Message}");
+            }
         });
     }
 
@@ -375,8 +448,18 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
-            var evt = new { @event = eventName, data };
-            MainWebView.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(evt));
+            try
+            {
+                if (MainWebView?.CoreWebView2 != null)
+                {
+                    var evt = new { @event = eventName, data };
+                    MainWebView.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(evt));
+                }
+            }
+            catch (Exception ex)
+            {
+                // Can happen during initial navigation
+            }
         });
     }
 

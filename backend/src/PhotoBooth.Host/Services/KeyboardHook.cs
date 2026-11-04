@@ -1,3 +1,4 @@
+using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
@@ -14,7 +15,8 @@ public class KeyboardHook : IDisposable
     private const int VK_RWIN = 0x5C;
     private const int VK_F4 = 0x73;
 
-    private readonly LowLevelKeyboardProc _proc;
+    // Prevent GC from collecting delegate
+    private static LowLevelKeyboardProc? _proc;
     private IntPtr _hookId = IntPtr.Zero;
     private readonly bool _allowEscapeToExit;
 
@@ -24,49 +26,60 @@ public class KeyboardHook : IDisposable
     {
         _allowEscapeToExit = allowEscapeToExit;
         _proc = HookCallback;
-        _hookId = SetHook(_proc);
+        try
+        {
+            _hookId = SetHook(_proc);
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WARN] SetHook failed: {ex.Message}");
+        }
     }
 
     private IntPtr SetHook(LowLevelKeyboardProc proc)
     {
         using var curProcess = Process.GetCurrentProcess();
         using var curModule = curProcess.MainModule;
-        return SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule?.ModuleName), 0);
+        IntPtr hMod = GetModuleHandle(curModule?.ModuleName);
+        if (hMod == IntPtr.Zero)
+        {
+            hMod = GetModuleHandle(null);
+        }
+        return SetWindowsHookEx(WH_KEYBOARD_LL, proc, hMod, 0);
     }
 
+    [UnmanagedFunctionPointer(CallingConvention.Winapi)]
     private delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
-        if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN))
+        try
         {
-            int vkCode = Marshal.ReadInt32(lParam);
-
-            // Check for Escape
-            if (vkCode == VK_ESCAPE)
+            if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN))
             {
-                EscapePressed?.Invoke();
-                if (!_allowEscapeToExit) return (IntPtr)1;
-            }
+                int vkCode = Marshal.ReadInt32(lParam);
 
-            // Block Windows Key
-            if (vkCode == VK_LWIN || vkCode == VK_RWIN)
-            {
-                return (IntPtr)1;
-            }
+                if (vkCode == VK_ESCAPE)
+                {
+                    EscapePressed?.Invoke();
+                    if (!_allowEscapeToExit) return (IntPtr)1;
+                }
 
-            // Block Alt + Tab
-            bool isAlt = (GetAsyncKeyState(0x12) & 0x8000) != 0; // VK_MENU
-            if (isAlt && vkCode == VK_TAB)
-            {
-                return (IntPtr)1;
-            }
+                if (vkCode == VK_LWIN || vkCode == VK_RWIN)
+                {
+                    return (IntPtr)1;
+                }
 
-            // Block Alt + F4
-            if (isAlt && vkCode == VK_F4)
-            {
-                return (IntPtr)1;
+                bool isAlt = (GetAsyncKeyState(0x12) & 0x8000) != 0;
+                if (isAlt && (vkCode == VK_TAB || vkCode == VK_F4))
+                {
+                    return (IntPtr)1;
+                }
             }
+        }
+        catch
+        {
+            // Never let hook callback throw into Win32 subsystem
         }
 
         return CallNextHookEx(_hookId, nCode, wParam, lParam);

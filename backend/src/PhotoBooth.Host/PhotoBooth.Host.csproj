@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -17,5 +17,12 @@
     <ProjectReference Include="..\PhotoBooth.Hardware\PhotoBooth.Hardware.csproj" />
     <ProjectReference Include="..\PhotoBooth.Imaging\PhotoBooth.Imaging.csproj" />
   </ItemGroup>
+
+  <Target Name="CopyDistUi" AfterTargets="Build" Condition="Exists('..\..\..\ui\dist\index.html')">
+    <ItemGroup>
+      <DistFiles Include="..\..\..\ui\dist\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DistFiles)" DestinationFolder="$(TargetDir)ui\dist\%(RecursiveDir)" SkipUnchangedFiles="true" />
+  </Target>
 
 </Project>
