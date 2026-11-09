@@ -20,7 +20,21 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const [isFlashing, setIsFlashing] = useState<boolean>(false);
   const [cameraReady, setCameraReady] = useState<boolean>(false);
+  const [liveFrameBase64, setLiveFrameBase64] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Listen to live camera frames from C# host (DSLR / Canon / MockCamera)
+  useEffect(() => {
+    const unlisten = ipc.listen<{ base64: string }>('camera_frame', (data: { base64: string }) => {
+      if (data && data.base64) {
+        setLiveFrameBase64(`data:image/jpeg;base64,${data.base64}`);
+        setCameraReady(true);
+      }
+    });
+    return () => {
+      unlisten();
+    };
+  }, []);
 
   // Setup WebCam or MediaStream
   useEffect(() => {
@@ -107,6 +121,10 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
       console.warn('Host capture call error (using browser capture):', e);
     }
 
+    if (!photoData && liveFrameBase64) {
+      photoData = liveFrameBase64;
+    }
+
     if (!photoData) {
       // Fallback placeholder pattern
       photoData = `https://picsum.photos/seed/shot_${Date.now()}/800/1200`;
@@ -172,29 +190,37 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
 
         {/* Top Center Title */}
         <div className="text-center">
-          <h2 className="text-2xl md:text-3xl font-serif-vintage italic font-bold text-[#1f1610]">
+          <h2 className="text-3xl md:text-4xl font-lobster text-[#1f1610]">
             Nhìn vào khung hình nhé
           </h2>
         </div>
 
-        {/* Top Right Label */}
-        <div className="font-serif-vintage italic text-base text-[#5c4d43] font-medium">
-          Photobooth by Favori
-        </div>
+        {/* Top Right Balancing Placeholder */}
+        <div className="w-28" />
       </header>
 
       {/* Viewfinder Camera Feed Section */}
       <main className="relative z-10 flex-1 flex flex-col items-center justify-center my-auto w-full max-w-4xl mx-auto px-4">
         <div className="relative w-full max-w-2xl aspect-[4/3] bg-neutral-900 rounded-3xl overflow-hidden shadow-2xl border-4 border-[#bfa282]/80">
-          {/* Live Video Feed */}
-          <video
-            ref={videoRef}
-            playsInline
-            muted
-            className={`w-full h-full object-cover transition-transform ${
-              isMirrored ? 'scale-x-[-1]' : 'scale-x-1'
-            }`}
-          />
+          {/* Live Video Feed (Dual-Source: C# Camera Frame Stream or Browser Webcam) */}
+          {liveFrameBase64 ? (
+            <img
+              src={liveFrameBase64}
+              alt="Live View"
+              className={`w-full h-full object-cover transition-transform ${
+                isMirrored ? 'scale-x-[-1]' : 'scale-x-1'
+              }`}
+            />
+          ) : (
+            <video
+              ref={videoRef}
+              playsInline
+              muted
+              className={`w-full h-full object-cover transition-transform ${
+                isMirrored ? 'scale-x-[-1]' : 'scale-x-1'
+              }`}
+            />
+          )}
 
           {!cameraReady && (
             <div className="absolute inset-0 flex items-center justify-center bg-neutral-900 text-white font-serif-vintage italic text-xl">
@@ -242,7 +268,7 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
 
       {/* Bottom Subtitle matching 8.png */}
       <footer className="relative z-10 w-full flex items-center justify-center pb-4 text-center">
-        <p className="font-serif-vintage italic font-bold text-xl md:text-2xl text-[#1f1610]">
+        <p className="font-lobster text-2xl md:text-3xl text-[#1f1610]">
           Vui lòng đứng trong khung hình nhé
         </p>
       </footer>

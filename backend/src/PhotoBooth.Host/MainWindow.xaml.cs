@@ -69,6 +69,14 @@ public partial class MainWindow : Window
                     }
                 });
             };
+            _keyboardHook.F2Pressed += () =>
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    App.Log("[INFO] Global F2 pressed: opening admin modal");
+                    SendEventToWeb("open_admin_modal", new { });
+                });
+            };
 
             // 2. Initialize Core Services
             App.Log("[INFO] Step 2: Core Services Init");

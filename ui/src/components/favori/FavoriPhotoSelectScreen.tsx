@@ -60,7 +60,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
 
                 {/* Card footer */}
                 <div className="flex items-center justify-between mt-3 px-1">
-                  <span className="font-serif-vintage italic font-bold text-base text-[#1f1610]">
+                  <span className="font-lobster text-lg text-[#1f1610]">
                     Ảnh {index + 1}
                   </span>
                   <div className="w-5 h-5 rounded-full bg-[#7a0000] text-white flex items-center justify-center text-xs">

@@ -11,6 +11,7 @@ public class KeyboardHook : IDisposable
     private const int WM_SYSKEYDOWN = 0x0104;
     private const int VK_TAB = 0x09;
     private const int VK_ESCAPE = 0x1B;
+    private const int VK_F2 = 0x71;
     private const int VK_LWIN = 0x5B;
     private const int VK_RWIN = 0x5C;
     private const int VK_F4 = 0x73;
@@ -21,6 +22,7 @@ public class KeyboardHook : IDisposable
     private readonly bool _allowEscapeToExit;
 
     public event Action? EscapePressed;
+    public event Action? F2Pressed;
 
     public KeyboardHook(bool allowEscapeToExit = true)
     {
@@ -63,6 +65,11 @@ public class KeyboardHook : IDisposable
                 {
                     EscapePressed?.Invoke();
                     if (!_allowEscapeToExit) return (IntPtr)1;
+                }
+
+                if (vkCode == VK_F2)
+                {
+                    F2Pressed?.Invoke();
                 }
 
                 if (vkCode == VK_LWIN || vkCode == VK_RWIN)

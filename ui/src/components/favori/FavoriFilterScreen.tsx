@@ -69,7 +69,7 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
                   />
                 </div>
 
-                <span className="font-serif-vintage italic font-bold text-base text-[#1f1610] text-center">
+                <span className="font-lobster text-lg text-[#1f1610] text-center">
                   {f.name}
                 </span>
 
@@ -94,7 +94,7 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
               <Sparkles className="w-6 h-6" />
             </div>
             <div>
-              <h4 className="font-serif-vintage italic font-bold text-lg text-[#1f1610]">
+              <h4 className="font-lobster text-2xl text-[#1f1610]">
                 Mịn da AI
               </h4>
               <p className="text-xs text-[#6b5b52]">

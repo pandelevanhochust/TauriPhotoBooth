@@ -87,7 +87,7 @@ export const FavoriPrintScreen: React.FC<FavoriPrintScreenProps> = ({
             </div>
 
             {/* Title matching 11.png */}
-            <h2 className="font-serif-vintage italic font-bold text-3xl md:text-4xl text-[#1f1610] tracking-wide leading-relaxed">
+            <h2 className="font-lobster text-3xl md:text-5xl text-[#1f1610] tracking-wide leading-relaxed">
               Đang gửi lệnh in , bạn chờ xíu nhé ...
             </h2>
 
@@ -105,11 +105,11 @@ export const FavoriPrintScreen: React.FC<FavoriPrintScreenProps> = ({
               <CheckCircle className="w-10 h-10" />
             </div>
 
-            <h2 className="font-serif-vintage italic font-bold text-3xl md:text-4xl text-[#1f1610] tracking-wide">
+            <h2 className="font-lobster text-3xl md:text-5xl text-[#1f1610] tracking-wide">
               In ảnh thành công!
             </h2>
 
-            <p className="font-serif-vintage italic font-bold text-2xl md:text-3xl text-[#7a0000] pt-2">
+            <p className="font-lobster text-2xl md:text-4xl text-[#7a0000] pt-2">
               Cảm ơn bạn đã sử dụng dịch vụ ,<br />
               Hãy nhận ảnh tại khay máy in nhé!
             </p>

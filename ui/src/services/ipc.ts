@@ -134,6 +134,10 @@ class IpcBridge {
     };
   }
 
+  public listen<T = any>(event: string, listener: EventListener<T>): () => void {
+    return this.on<T>(event, listener);
+  }
+
   private handleMockCommand<TResult>(command: string, payload: any): Promise<TResult> {
     console.log(`[IPC Mock] ${command}`, payload);
     return new Promise((resolve) => {

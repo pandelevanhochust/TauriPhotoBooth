@@ -99,7 +99,7 @@ export const FavoriFrameScreen: React.FC<FavoriFrameScreenProps> = ({
               </div>
 
               {/* Title & selection */}
-              <span className="font-serif-vintage italic font-bold text-lg text-[#1f1610] text-center">
+              <span className="font-lobster text-xl text-[#1f1610] text-center">
                 {frame.name}
               </span>
 

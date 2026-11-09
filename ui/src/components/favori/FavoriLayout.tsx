@@ -67,7 +67,7 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
                 </span>
               )}
               {stepTitle && (
-                <h1 className="text-3xl md:text-4xl font-serif-vintage italic font-bold text-[#1f1610] tracking-tight">
+                <h1 className="text-3xl md:text-5xl font-lobster text-[#1f1610] tracking-normal">
                   {stepTitle}
                 </h1>
               )}
@@ -79,12 +79,8 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
             </div>
           )}
 
-          {/* Top Right Label */}
-          <div className="text-right">
-            <span className="font-serif-vintage italic text-sm md:text-base text-[#5c4d43] tracking-wide font-medium">
-              Photobooth by Favori
-            </span>
-          </div>
+          {/* Top Right Balancing Placeholder */}
+          <div className="w-28 text-right" />
         </header>
       )}
 

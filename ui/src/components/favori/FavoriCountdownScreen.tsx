@@ -20,7 +20,7 @@ export const FavoriCountdownScreen: React.FC<FavoriCountdownScreenProps> = ({ on
       hideHeader={false}
     >
       <div className="flex flex-col items-center justify-center my-auto text-center space-y-8 animate-soft-pulse">
-        <h2 className="font-serif-vintage italic font-bold text-3xl md:text-5xl text-[#1f1610] tracking-wide leading-relaxed">
+        <h2 className="font-lobster text-4xl md:text-6xl text-[#1f1610] tracking-wide leading-relaxed">
           Cười xinh để máy chuẩn bị chụp nè ...
         </h2>
         

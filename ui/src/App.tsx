@@ -56,15 +56,27 @@ export const App: React.FC = () => {
       .catch((err) => console.log('Get kiosk status error:', err));
   }, []);
 
-  // Keyboard shortcut for technician admin access (Ctrl+Shift+A)
+  // Keyboard shortcuts for technician admin access (F2, Ctrl+Shift+A, Ctrl+Alt+A)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && (e.key === 'A' || e.key === 'a')) {
-        setIsAdminOpen(true);
+      const isA = e.key.toLowerCase() === 'a';
+      if (
+        (e.ctrlKey && e.shiftKey && isA) ||
+        (e.ctrlKey && e.altKey && isA) ||
+        e.key === 'F2'
+      ) {
+        e.preventDefault();
+        setIsAdminOpen((prev) => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    const unlistenIpc = ipc.listen('open_admin_modal', () => {
+      setIsAdminOpen(true);
+    });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      unlistenIpc();
+    };
   }, []);
 
   const handleStartSession = () => {

@@ -66,7 +66,7 @@ export const FavoriQuantityScreen: React.FC<FavoriQuantityScreenProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 w-full max-w-5xl items-center py-2">
         {/* Left Side: Promo Code & Touch Keyboard (7 cols) */}
         <div className="lg:col-span-7 flex flex-col space-y-4">
-          <label className="text-lg font-serif-vintage italic font-bold text-[#1f1610]">
+          <label className="text-xl font-lobster text-[#1f1610]">
             Nhập mã giảm giá :
           </label>
 
@@ -174,7 +174,7 @@ export const FavoriQuantityScreen: React.FC<FavoriQuantityScreenProps> = ({
           <div className="favori-card w-full max-w-sm p-8 flex flex-col items-center justify-between border-2 border-[#bfa282]/80 shadow-xl space-y-6">
             {/* Quantity Stepper */}
             <div className="w-full flex flex-col items-center space-y-3">
-              <span className="font-serif-vintage italic text-lg text-[#1f1610] font-bold">
+              <span className="font-lobster text-xl text-[#1f1610]">
                 Chọn số lượng bản in :
               </span>
               <div className="flex items-center justify-center gap-2 w-full">
@@ -198,7 +198,7 @@ export const FavoriQuantityScreen: React.FC<FavoriQuantityScreenProps> = ({
 
             {/* Total Price Display */}
             <div className="w-full flex flex-col items-center space-y-3">
-              <span className="font-serif-vintage italic text-lg text-[#1f1610] font-bold">
+              <span className="font-lobster text-xl text-[#1f1610]">
                 Tổng tiền thanh toán :
               </span>
               <div className="w-full h-12 bg-neutral-100 border-2 border-[#bfa282] rounded-lg flex items-center justify-center text-xl font-bold text-[#7a0000]">

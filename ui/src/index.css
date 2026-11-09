@@ -29,12 +29,13 @@
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
 
-  h1, h2, h3, .font-serif-vintage {
-    font-family: 'Playfair Display', 'Cormorant Garamond', Georgia, serif;
+  h1, h2, h3, .font-lobster, .font-serif-vintage {
+    font-family: 'Lobster', 'Lobster Two', 'Playfair Display', Georgia, serif;
+    letter-spacing: 0.01em;
   }
 
   .font-script-favori {
-    font-family: 'Alex Brush', cursive;
+    font-family: 'Lobster', cursive;
   }
 }
 

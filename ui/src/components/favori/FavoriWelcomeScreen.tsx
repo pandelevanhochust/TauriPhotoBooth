@@ -20,9 +20,9 @@ export const FavoriWelcomeScreen: React.FC<FavoriWelcomeScreenProps> = ({
 
   const handleAdminTap = () => {
     const now = Date.now();
-    if (now - lastTapTime < 800) {
+    if (now - lastTapTime < 2500) {
       const newCount = tapCount + 1;
-      if (newCount >= 5) {
+      if (newCount >= 3) {
         setTapCount(0);
         onOpenAdmin();
       } else {
@@ -46,18 +46,18 @@ export const FavoriWelcomeScreen: React.FC<FavoriWelcomeScreenProps> = ({
       <header className="relative z-10 w-full flex items-center justify-between pt-2 px-6">
         <div 
           onClick={handleAdminTap} 
-          className="w-24 h-16 cursor-pointer opacity-0 hover:opacity-10 transition-opacity" 
-          title="Admin Gate"
+          className="w-28 h-20 cursor-pointer opacity-0 hover:opacity-10 transition-opacity" 
         />
-        <div className="font-serif-vintage italic text-base md:text-lg text-[#5c4d43] font-medium tracking-wide">
-          Photobooth by Favori
-        </div>
+        <div className="w-28" />
       </header>
 
       {/* Center Hero Section Matching 1.png */}
       <main className="relative z-10 flex flex-col items-center justify-center my-auto text-center space-y-6">
         {/* Favori Calligraphic Logo */}
-        <div className="w-full max-w-md flex justify-center animate-soft-pulse">
+        <div 
+          onClick={handleAdminTap}
+          className="w-full max-w-md flex justify-center animate-soft-pulse cursor-pointer select-none active:scale-[0.98] transition-transform"
+        >
           <img 
             src="/favori/logo.png" 
             alt="Favori" 
@@ -65,8 +65,8 @@ export const FavoriWelcomeScreen: React.FC<FavoriWelcomeScreenProps> = ({
           />
         </div>
 
-        {/* Vintage Italic Tagline */}
-        <p className="font-serif-vintage italic text-xl md:text-2xl text-[#3b2d24] font-medium tracking-wide">
+        {/* Vintage Italic Tagline in Lobster font */}
+        <p className="font-lobster text-2xl md:text-3xl text-[#3b2d24] tracking-wide">
           {language === 'vi' ? 'Lưu lại khoảng khắc đẹp nhất của bạn' : 'Capture your most beautiful moments'}
         </p>
 
