@@ -1,17 +1,14 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { FavoriLayout } from './FavoriLayout';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Loader2 } from 'lucide-react';
+import { backendApi, type FilterOption } from '../../services/backendApi';
 
-export interface FilterOption {
-  id: string;
-  name: string;
-  cssFilter: string;
-}
+export type { FilterOption };
 
 interface FavoriFilterScreenProps {
   photos: string[];
   selectedFilter: string;
-  onSelectFilter: (id: string) => void;
+  onSelectFilter: (id: string, filterObj?: FilterOption) => void;
   beautifyEnabled: boolean;
   onToggleBeautify: (val: boolean) => void;
   onNext: () => void;
@@ -27,15 +24,27 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
   onNext,
   onBack,
 }) => {
+  const [filters, setFilters] = useState<FilterOption[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
   const samplePhoto = photos[0] || 'https://picsum.photos/seed/sample/400/600';
 
-  const filters: FilterOption[] = [
-    { id: 'original', name: 'Gốc (Tự nhiên)', cssFilter: 'none' },
-    { id: 'vintage', name: 'Cổ Điển', cssFilter: 'sepia(0.35) contrast(1.1) brightness(0.95)' },
-    { id: 'bw', name: 'Trắng Đen', cssFilter: 'grayscale(1) contrast(1.2)' },
-    { id: 'warm-rose', name: 'Hồng Ấm', cssFilter: 'hue-rotate(-15deg) saturate(1.15) brightness(1.02)' },
-    { id: 'cool-cine', name: 'Điện Ảnh', cssFilter: 'hue-rotate(20deg) contrast(1.15) saturate(0.9)' },
-  ];
+  useEffect(() => {
+    let isMounted = true;
+    backendApi.getPresets().then((data) => {
+      if (isMounted) {
+        setFilters(data);
+        setLoading(false);
+        // Nếu filter hiện tại chưa được chọn hoặc không nằm trong danh sách, chọn item đầu tiên
+        if (data.length > 0 && !data.some((f) => f.id === selectedFilter || f.code === selectedFilter)) {
+          onSelectFilter(data[0].id, data[0]);
+        }
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   return (
     <FavoriLayout
@@ -45,47 +54,54 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
       onNext={onNext}
     >
       <div className="flex flex-col items-center w-full max-w-5xl py-2 space-y-6">
-        {/* Filter Cards Row */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 w-full">
-          {filters.map((f) => {
-            const isSelected = selectedFilter === f.id;
-            return (
-              <div
-                key={f.id}
-                onClick={() => onSelectFilter(f.id)}
-                className={`favori-card flex flex-col items-center p-3 cursor-pointer transition-all ${
-                  isSelected
-                    ? 'ring-3 ring-[#7a0000] scale-105 shadow-xl'
-                    : 'hover:scale-102 hover:border-[#7a0000]/50'
-                }`}
-              >
-                {/* Thumbnail Preview */}
-                <div className="w-full aspect-[3/4] rounded-lg overflow-hidden bg-neutral-200 mb-3 border border-neutral-300 shadow-inner">
-                  <img
-                    src={samplePhoto}
-                    alt={f.name}
-                    className="w-full h-full object-cover transition-all"
-                    style={{ filter: f.cssFilter }}
-                  />
-                </div>
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-16 space-y-3">
+            <Loader2 className="w-8 h-8 animate-spin text-[#7a0000]" />
+            <span className="text-[#6b5b52] font-medium">Đang tải bộ lọc từ máy chủ...</span>
+          </div>
+        ) : (
+          /* Filter Cards Row */
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 w-full">
+            {filters.map((f) => {
+              const isSelected = selectedFilter === f.id || selectedFilter === f.code;
+              return (
+                <div
+                  key={f.id}
+                  onClick={() => onSelectFilter(f.id, f)}
+                  className={`favori-card flex flex-col items-center p-3 cursor-pointer transition-all ${
+                    isSelected
+                      ? 'ring-3 ring-[#7a0000] scale-105 shadow-xl'
+                      : 'hover:scale-102 hover:border-[#7a0000]/50'
+                  }`}
+                >
+                  {/* Thumbnail Preview with Real-time Filter */}
+                  <div className="w-full aspect-[3/4] rounded-lg overflow-hidden bg-neutral-200 mb-3 border border-neutral-300 shadow-inner">
+                    <img
+                      src={f.thumbnailUrl || samplePhoto}
+                      alt={f.name}
+                      className="w-full h-full object-cover transition-all duration-300"
+                      style={{ filter: f.cssFilter }}
+                    />
+                  </div>
 
-                <span className="font-lobster text-lg text-[#1f1610] text-center">
-                  {f.name}
-                </span>
+                  <span className="font-lobster text-lg text-[#1f1610] text-center leading-snug">
+                    {f.name}
+                  </span>
 
-                <div className="mt-2">
-                  <div
-                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                      isSelected ? 'border-[#7a0000] bg-[#7a0000]' : 'border-[#c5a880]'
-                    }`}
-                  >
-                    {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                  <div className="mt-2">
+                    <div
+                      className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                        isSelected ? 'border-[#7a0000] bg-[#7a0000]' : 'border-[#c5a880]'
+                      }`}
+                    >
+                      {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* AI Skin Beautification Feature Toggle */}
         <div className="w-full max-w-md bg-white/90 border-2 border-[#bfa282]/60 rounded-2xl p-4 flex items-center justify-between shadow-md">

@@ -32,9 +32,28 @@ public partial class MainWindow : Window
 
     private string _currentSessionId = "";
     private string _currentSessionDir = "";
+    private string _localGalleryDir = "";
     private string _kioskMode = "FreeEvent";
     private readonly List<string> _capturedRawPhotos = new();
     private string _lastCompositePath = "";
+
+    private static string GetLocalGalleryRootDir()
+    {
+        try
+        {
+            if (Directory.Exists(@"D:\"))
+            {
+                string dPath = @"D:\HihiBooth_Gallery";
+                if (!Directory.Exists(dPath)) Directory.CreateDirectory(dPath);
+                return dPath;
+            }
+        }
+        catch { }
+
+        string picturesPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "HihiBooth_Gallery");
+        if (!Directory.Exists(picturesPath)) Directory.CreateDirectory(picturesPath);
+        return picturesPath;
+    }
 
     public MainWindow()
     {
@@ -131,10 +150,21 @@ public partial class MainWindow : Window
         App.Log("[INFO] InitializeWebView2Async: Creating Environment");
         string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         string webViewDataFolder = Path.Combine(localAppData, "HihiBooth", "WebView2Data");
-        var env = await CoreWebView2Environment.CreateAsync(null, webViewDataFolder);
+        var options = new CoreWebView2EnvironmentOptions("--allow-running-insecure-content --disable-web-security --use-fake-ui-for-media-stream");
+        var env = await CoreWebView2Environment.CreateAsync(null, webViewDataFolder, options);
         App.Log("[INFO] InitializeWebView2Async: Ensuring CoreWebView2");
         await MainWebView.EnsureCoreWebView2Async(env);
         App.Log("[INFO] InitializeWebView2Async: CoreWebView2 ready");
+
+        // Auto-grant camera and microphone permissions for WebRTC getUserMedia
+        MainWebView.CoreWebView2.PermissionRequested += (sender, args) =>
+        {
+            if (args.PermissionKind == CoreWebView2PermissionKind.Camera ||
+                args.PermissionKind == CoreWebView2PermissionKind.Microphone)
+            {
+                args.State = CoreWebView2PermissionState.Allow;
+            }
+        };
 
         // Security & Kiosk configurations
         MainWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
@@ -151,7 +181,7 @@ public partial class MainWindow : Window
                 Focus();
                 MainWebView.Focus();
             });
-            if (args.IsSuccess && _camera != null)
+            if (args.IsSuccess && _camera != null && _useMockLiveView)
             {
                 _ = _camera.StartLiveViewAsync();
             }
@@ -222,9 +252,13 @@ public partial class MainWindow : Window
         return null;
     }
 
+    private bool _useMockLiveView = false;
     private int _frameThrottle = 0;
     private void OnCameraFrameArrived(object? sender, FrameLeaseEventArgs e)
     {
+        // Do not broadcast mock frames if using real webcam
+        if (!_useMockLiveView) return;
+
         // Broadcast camera frame to React UI every 3 frames (~10 fps to prevent IPC saturating)
         if (++_frameThrottle % 3 == 0)
         {
@@ -287,10 +321,71 @@ public partial class MainWindow : Window
                     });
                     break;
 
+                case "get_frames":
+                    try
+                    {
+                        using var httpFrames = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+                        string framesUrl = "http://129.221.221.113:8080/api/frames?onlyActive=true";
+                        string jsonFrames = await httpFrames.GetStringAsync(framesUrl);
+                        using var docFrames = JsonDocument.Parse(jsonFrames);
+                        SendSuccessResponse(id, docFrames.RootElement.Clone());
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Log($"[ERROR] get_frames IPC error: {ex.Message}");
+                        SendErrorResponse(id, ex.Message);
+                    }
+                    break;
+
+                case "get_presets":
+                    try
+                    {
+                        using var httpPresets = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+                        string presetsUrl = "http://129.221.221.113:8080/api/presets?onlyActive=true";
+                        string jsonPresets = await httpPresets.GetStringAsync(presetsUrl);
+                        using var docPresets = JsonDocument.Parse(jsonPresets);
+                        SendSuccessResponse(id, docPresets.RootElement.Clone());
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Log($"[ERROR] get_presets IPC error: {ex.Message}");
+                        SendErrorResponse(id, ex.Message);
+                    }
+                    break;
+
+                case "get_cameras":
+                    SendSuccessResponse(id, new[]
+                    {
+                        new { id = "hd_webcam", name = "HD Webcam", isDefault = true }
+                    });
+                    break;
+
                 case "verify_admin_pin":
                     string enteredPin = payload.TryGetProperty("pin", out var pinEl) ? pinEl.GetString() ?? "" : "";
                     bool isValid = (enteredPin == "8888" || enteredPin == "1234");
                     SendSuccessResponse(id, isValid);
+                    break;
+
+                case "open_gallery_folder":
+                    try
+                    {
+                        string targetFolder = !string.IsNullOrEmpty(_localGalleryDir) && Directory.Exists(_localGalleryDir)
+                            ? _localGalleryDir
+                            : GetLocalGalleryRootDir();
+
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "explorer.exe",
+                            Arguments = $"\"{targetFolder}\"",
+                            UseShellExecute = true
+                        });
+                        SendSuccessResponse(id, new { folder = targetFolder });
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Log($"[ERROR] open_gallery_folder: {ex.Message}");
+                        SendErrorResponse(id, ex.Message);
+                    }
                     break;
 
                 case "start_capture_session":
@@ -298,9 +393,16 @@ public partial class MainWindow : Window
                     string commonData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data", "Sessions", _currentSessionId);
                     _currentSessionDir = commonData;
                     if (!Directory.Exists(_currentSessionDir)) Directory.CreateDirectory(_currentSessionDir);
-                    _capturedRawPhotos.Clear();
 
-                    SendSuccessResponse(id, new { sessionId = _currentSessionId });
+                    // Setup local gallery folder: <RootDir>/YYYY-MM-DD/<SessionId>
+                    string dateFolder = DateTime.Now.ToString("yyyy-MM-dd");
+                    _localGalleryDir = Path.Combine(GetLocalGalleryRootDir(), dateFolder, _currentSessionId);
+                    if (!Directory.Exists(_localGalleryDir)) Directory.CreateDirectory(_localGalleryDir);
+
+                    _capturedRawPhotos.Clear();
+                    App.Log($"[INFO] Session started: {_currentSessionId}, local gallery: {_localGalleryDir}");
+
+                    SendSuccessResponse(id, new { sessionId = _currentSessionId, galleryDir = _localGalleryDir });
                     break;
 
                 case "capture_shot":
@@ -311,7 +413,47 @@ public partial class MainWindow : Window
                         if (!Directory.Exists(_currentSessionDir)) Directory.CreateDirectory(_currentSessionDir);
                     }
 
-                    if (_camera != null)
+                    // Check if frontend provided real webcam capture Base64
+                    string rawB64 = "";
+                    if (payload.TryGetProperty("base64", out var b64Prop))
+                    {
+                        rawB64 = b64Prop.GetString() ?? "";
+                        if (rawB64.Contains(","))
+                        {
+                            rawB64 = rawB64.Substring(rawB64.IndexOf(",") + 1);
+                        }
+                    }
+
+                    string realShotPath = Path.Combine(_currentSessionDir, $"shot_{shotIndex}.jpg");
+                    if (!string.IsNullOrWhiteSpace(rawB64))
+                    {
+                        try
+                        {
+                            byte[] photoBytes = Convert.FromBase64String(rawB64);
+                            await File.WriteAllBytesAsync(realShotPath, photoBytes);
+                            if (!_capturedRawPhotos.Contains(realShotPath))
+                            {
+                                _capturedRawPhotos.Add(realShotPath);
+                            }
+
+                            // Also save copy to permanent local gallery
+                            if (!string.IsNullOrEmpty(_localGalleryDir) && Directory.Exists(_localGalleryDir))
+                            {
+                                string galleryShotPath = Path.Combine(_localGalleryDir, $"shot_{shotIndex}.jpg");
+                                await File.WriteAllBytesAsync(galleryShotPath, photoBytes);
+                            }
+
+                            App.Log($"[INFO] Captured shot #{shotIndex} from Webcam saved to {realShotPath} ({photoBytes.Length} bytes)");
+                            SendSuccessResponse(id, new { filePath = realShotPath, base64 = rawB64 });
+                            return;
+                        }
+                        catch (Exception ex)
+                        {
+                            App.Log($"[WARN] Failed to write webcam base64 shot: {ex.Message}");
+                        }
+                    }
+
+                    if (_camera != null && _useMockLiveView)
                     {
                         var capResult = await _camera.CapturePhotoAsync(_currentSessionDir);
                         if (capResult.IsSuccess && !string.IsNullOrEmpty(capResult.RawImagePath))
@@ -326,12 +468,32 @@ public partial class MainWindow : Window
 
                     // Fallback mock shot
                     string fallbackShot = Path.Combine(_currentSessionDir, $"shot_{shotIndex}.jpg");
-                    SendSuccessResponse(id, new { filePath = fallbackShot, base64 = "" });
+                    if (!File.Exists(fallbackShot))
+                    {
+                        using var surface = SkiaSharp.SKSurface.Create(new SkiaSharp.SKImageInfo(1200, 800));
+                        var c = surface.Canvas;
+                        c.Clear(SkiaSharp.SKColors.Ivory);
+                        using var paint = new SkiaSharp.SKPaint { Color = SkiaSharp.SKColors.DarkRed, IsAntialias = true };
+                        using var font = new SkiaSharp.SKFont(SkiaSharp.SKTypeface.Default, 44);
+                        c.DrawText($"HihiBooth Photo #{shotIndex}", 250, 420, SkiaSharp.SKTextAlign.Left, font, paint);
+                        using var img = surface.Snapshot();
+                        using var data = img.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, 90);
+                        using var fs = File.OpenWrite(fallbackShot);
+                        data.SaveTo(fs);
+                    }
+                    if (!_capturedRawPhotos.Contains(fallbackShot))
+                    {
+                        _capturedRawPhotos.Add(fallbackShot);
+                    }
+                    byte[] mockBytes = await File.ReadAllBytesAsync(fallbackShot);
+                    string mockB64 = Convert.ToBase64String(mockBytes);
+                    SendSuccessResponse(id, new { filePath = fallbackShot, base64 = mockB64 });
                     break;
 
                 case "compose_strip":
                     string layoutType = payload.TryGetProperty("layoutType", out var lt) ? lt.GetString() ?? "strip2x6" : "strip2x6";
-                    string frameColor = payload.TryGetProperty("frameColor", out var fc) ? fc.GetString() ?? "#ffffff" : "#ffffff";
+                    string frameUrl = payload.TryGetProperty("frameUrl", out var fu) ? fu.GetString() ?? "" : "";
+                    string filterCode = payload.TryGetProperty("filterCode", out var fcCode) ? fcCode.GetString() ?? "" : "";
                     bool beautify = payload.TryGetProperty("beautify", out var btf) && btf.GetBoolean();
 
                     // Setup FrameTemplate
@@ -345,7 +507,28 @@ public partial class MainWindow : Window
                         Holes = new List<HoleLocation>()
                     };
 
-                    if (template.SupportedPaperType == PaperType.DoubleStrip2x6)
+                    // Dynamic holes from payload
+                    if (payload.TryGetProperty("holes", out var holesEl) && holesEl.ValueKind == JsonValueKind.Array && holesEl.GetArrayLength() > 0)
+                    {
+                        int shotIdx = 1;
+                        foreach (var h in holesEl.EnumerateArray())
+                        {
+                            int x = h.TryGetProperty("x", out var xProp) ? xProp.GetInt32() : 0;
+                            int y = h.TryGetProperty("y", out var yProp) ? yProp.GetInt32() : 0;
+                            int w = h.TryGetProperty("w", out var wProp) ? wProp.GetInt32() : 540;
+                            int hVal = h.TryGetProperty("h", out var hProp) ? hProp.GetInt32() : 370;
+                            template.Holes.Add(new HoleLocation
+                            {
+                                ShotIndex = shotIdx++,
+                                X = x,
+                                Y = y,
+                                Width = w,
+                                Height = hVal,
+                                CornerRadius = 12
+                            });
+                        }
+                    }
+                    else if (template.SupportedPaperType == PaperType.DoubleStrip2x6)
                     {
                         // 4 vertical holes on left strip (0 to 600 width)
                         int slotW = 540;
@@ -377,6 +560,92 @@ public partial class MainWindow : Window
                         template.Holes.Add(new HoleLocation { ShotIndex = 4, X = 615, Y = 850, Width = slotW, Height = slotH, CornerRadius = 12 });
                     }
 
+                    // Check overlay frame image (download or local cache)
+                    if (!string.IsNullOrWhiteSpace(frameUrl))
+                    {
+                        if (File.Exists(frameUrl))
+                        {
+                            template.OverlayImagePath = frameUrl;
+                        }
+                        else if (Uri.TryCreate(frameUrl, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+                        {
+                            try
+                            {
+                                string baseDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data");
+                                string cacheDir = Path.Combine(baseDataDir, "FramesCache");
+                                if (!Directory.Exists(cacheDir)) Directory.CreateDirectory(cacheDir);
+                                string localFile = Path.Combine(cacheDir, Path.GetFileName(uri.AbsolutePath));
+                                if (!File.Exists(localFile))
+                                {
+                                    using var hc = new HttpClient();
+                                    var fBytes = await hc.GetByteArrayAsync(uri);
+                                    await File.WriteAllBytesAsync(localFile, fBytes);
+                                }
+                                template.OverlayImagePath = localFile;
+                            }
+                            catch (Exception ex)
+                            {
+                                App.Log($"[WARN] Could not fetch overlay frame from {frameUrl}: {ex.Message}");
+                            }
+                        }
+                    }
+
+                    // Check if frontend passed photos list (base64 data URLs or file paths)
+                    if (payload.TryGetProperty("photos", out var photosEl) && photosEl.ValueKind == JsonValueKind.Array)
+                    {
+                        int pIdx = 1;
+                        foreach (var pItem in photosEl.EnumerateArray())
+                        {
+                            string pStr = pItem.GetString() ?? "";
+                            if (!string.IsNullOrWhiteSpace(pStr) && pStr.Contains(";base64,"))
+                            {
+                                string base64Data = pStr.Substring(pStr.IndexOf(";base64,") + 8);
+                                string pPath = Path.Combine(_currentSessionDir, $"shot_{pIdx}.jpg");
+                                try
+                                {
+                                    byte[] pBytes = Convert.FromBase64String(base64Data);
+                                    File.WriteAllBytes(pPath, pBytes);
+                                    if (!_capturedRawPhotos.Contains(pPath))
+                                    {
+                                        _capturedRawPhotos.Add(pPath);
+                                    }
+                                }
+                                catch (Exception pEx)
+                                {
+                                    App.Log($"[WARN] Error decoding photo #{pIdx} in compose_strip: {pEx.Message}");
+                                }
+                            }
+                            else if (!string.IsNullOrWhiteSpace(pStr) && File.Exists(pStr) && !_capturedRawPhotos.Contains(pStr))
+                            {
+                                _capturedRawPhotos.Add(pStr);
+                            }
+                            pIdx++;
+                        }
+                    }
+
+                    // Ensure at least 4 photos exist for composition
+                    if (_capturedRawPhotos.Count == 0)
+                    {
+                        for (int i = 1; i <= 4; i++)
+                        {
+                            string mockPath = Path.Combine(_currentSessionDir, $"mock_shot_{i}.jpg");
+                            if (!File.Exists(mockPath))
+                            {
+                                using var surf = SkiaSharp.SKSurface.Create(new SkiaSharp.SKImageInfo(1200, 800));
+                                var c = surf.Canvas;
+                                c.Clear(i % 2 == 0 ? SkiaSharp.SKColors.MistyRose : SkiaSharp.SKColors.LightCyan);
+                                using var p = new SkiaSharp.SKPaint { Color = SkiaSharp.SKColors.DarkSlateGray, IsAntialias = true };
+                                using var font = new SkiaSharp.SKFont(SkiaSharp.SKTypeface.Default, 42);
+                                c.DrawText($"Favori Photo #{i}", 200, 420, SkiaSharp.SKTextAlign.Left, font, p);
+                                using var snap = surf.Snapshot();
+                                using var d = snap.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, 90);
+                                using var fs = File.OpenWrite(mockPath);
+                                d.SaveTo(fs);
+                            }
+                            _capturedRawPhotos.Add(mockPath);
+                        }
+                    }
+
                     string compositeOut = Path.Combine(_currentSessionDir, "composite_final.jpg");
                     await _skiaCompositor.ComposePrintSheetAsync(template, _capturedRawPhotos, compositeOut);
                     _lastCompositePath = compositeOut;
@@ -384,6 +653,39 @@ public partial class MainWindow : Window
                     // Also export animated recap gif using MagickCompositor
                     string recapGif = Path.Combine(_currentSessionDir, "recap.gif");
                     _ = _magickCompositor.CreateAnimatedRecapAsync(_capturedRawPhotos, recapGif);
+
+                    // Save copies to permanent local gallery folder
+                    if (!string.IsNullOrEmpty(_localGalleryDir) && Directory.Exists(_localGalleryDir))
+                    {
+                        try
+                        {
+                            string galComp = Path.Combine(_localGalleryDir, "composite_final.jpg");
+                            File.Copy(compositeOut, galComp, true);
+
+                            if (File.Exists(recapGif))
+                            {
+                                File.Copy(recapGif, Path.Combine(_localGalleryDir, "recap.gif"), true);
+                            }
+
+                            // Write session manifest JSON
+                            var sessionInfo = new
+                            {
+                                sessionId = _currentSessionId,
+                                createdAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                                layoutType = layoutType,
+                                frameUrl = frameUrl,
+                                filterCode = filterCode,
+                                shotCount = _capturedRawPhotos.Count
+                            };
+                            string infoJson = JsonSerializer.Serialize(sessionInfo, new JsonSerializerOptions { WriteIndented = true });
+                            File.WriteAllText(Path.Combine(_localGalleryDir, "session_info.json"), infoJson);
+                            App.Log($"[INFO] Saved complete session artifacts to local gallery: {_localGalleryDir}");
+                        }
+                        catch (Exception gEx)
+                        {
+                            App.Log($"[WARN] Could not copy composite to gallery: {gEx.Message}");
+                        }
+                    }
 
                     // Read preview bytes
                     byte[] compBytes = await File.ReadAllBytesAsync(compositeOut);

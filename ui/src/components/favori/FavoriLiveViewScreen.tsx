@@ -39,29 +39,52 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
   // Setup WebCam or MediaStream
   useEffect(() => {
     let stream: MediaStream | null = null;
-    navigator.mediaDevices
-      ?.getUserMedia({
-        video: {
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          facingMode: 'user',
-        },
-        audio: false,
-      })
-      .then((s) => {
+    let isCancelled = false;
+
+    async function initWebcam() {
+      try {
+        console.log('[FavoriLiveViewScreen] Requesting webcam media stream...');
+        let s: MediaStream;
+        try {
+          s = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 1920, min: 640 },
+              height: { ideal: 1080, min: 480 },
+              facingMode: 'user',
+            },
+            audio: false,
+          });
+        } catch (strictErr) {
+          console.warn('[FavoriLiveViewScreen] Strict constraints failed, falling back to basic video: true', strictErr);
+          s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+
+        if (isCancelled) {
+          s.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
         stream = s;
         if (videoRef.current) {
           videoRef.current.srcObject = s;
-          videoRef.current.play();
+          try {
+            await videoRef.current.play();
+          } catch (playErr) {
+            console.warn('[FavoriLiveViewScreen] Video play auto-play warning:', playErr);
+          }
           setCameraReady(true);
+          console.log('[FavoriLiveViewScreen] Webcam connected and streaming successfully!');
         }
-      })
-      .catch((err) => {
-        console.warn('Webcam stream not accessible, using fallback canvas stream:', err);
+      } catch (err) {
+        console.error('[FavoriLiveViewScreen] Webcam stream not accessible:', err);
         setCameraReady(true);
-      });
+      }
+    }
+
+    initWebcam();
 
     return () => {
+      isCancelled = true;
       if (stream) {
         stream.getTracks().forEach((track) => track.stop());
       }
@@ -109,13 +132,14 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
       }
     }
 
-    // Also call host IPC capture
+    // Also call host IPC capture and pass real webcam photo
     try {
-      const result = await ipc.invoke<{ photoPath: string }>('capture_shot', {
+      const result = await ipc.invoke<{ filePath?: string; base64?: string }>('capture_shot', {
         shotIndex: currentShot,
+        base64: photoData,
       });
-      if (result && result.photoPath && !photoData) {
-        photoData = result.photoPath;
+      if (result && result.filePath && !photoData) {
+        photoData = result.filePath;
       }
     } catch (e) {
       console.warn('Host capture call error (using browser capture):', e);
@@ -199,23 +223,23 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
         <div className="w-28" />
       </header>
 
-      {/* Viewfinder Camera Feed Section */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center my-auto w-full max-w-4xl mx-auto px-4">
-        <div className="relative w-full max-w-2xl aspect-[4/3] bg-neutral-900 rounded-3xl overflow-hidden shadow-2xl border-4 border-[#bfa282]/80">
-          {/* Live Video Feed (Dual-Source: C# Camera Frame Stream or Browser Webcam) */}
-          {liveFrameBase64 ? (
+      {/* Viewfinder Camera Feed Section - Expanded for large Kiosk display */}
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center my-auto w-full max-w-6xl mx-auto px-2 md:px-4">
+        <div className="relative w-full max-w-5xl h-[68vh] md:h-[72vh] max-h-[820px] bg-neutral-950 rounded-3xl overflow-hidden shadow-2xl border-4 border-[#bfa282]/90 flex items-center justify-center">
+          {/* Live Video Feed (Dual-Source: Browser Webcam prioritized or C# Camera Stream) */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className={`w-full h-full object-cover transition-transform ${
+              isMirrored ? 'scale-x-[-1]' : 'scale-x-1'
+            } ${liveFrameBase64 ? 'hidden' : 'block'}`}
+          />
+          {liveFrameBase64 && (
             <img
               src={liveFrameBase64}
               alt="Live View"
-              className={`w-full h-full object-cover transition-transform ${
-                isMirrored ? 'scale-x-[-1]' : 'scale-x-1'
-              }`}
-            />
-          ) : (
-            <video
-              ref={videoRef}
-              playsInline
-              muted
               className={`w-full h-full object-cover transition-transform ${
                 isMirrored ? 'scale-x-[-1]' : 'scale-x-1'
               }`}
@@ -225,6 +249,14 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
           {!cameraReady && (
             <div className="absolute inset-0 flex items-center justify-center bg-neutral-900 text-white font-serif-vintage italic text-xl">
               Đang kết nối camera ...
+            </div>
+          )}
+
+          {/* Camera Status Badge */}
+          {cameraReady && (
+            <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-white/90 text-xs flex items-center gap-1.5 border border-white/10">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              HD Webcam Live
             </div>
           )}
 

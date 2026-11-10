@@ -13,6 +13,7 @@ import { FavoriPhotoSelectScreen } from './components/favori/FavoriPhotoSelectSc
 import { FavoriPrintScreen } from './components/favori/FavoriPrintScreen';
 import { AdminModal } from './components/AdminModal';
 import { ipc } from './services/ipc';
+import type { FrameOption, FilterOption } from './services/backendApi';
 
 export type FavoriStep =
   | 'welcome'     // 1.png
@@ -37,9 +38,11 @@ export const App: React.FC = () => {
   // Session Options State
   const [selectedSize, setSelectedSize] = useState<PhotoSizeType>('strip2x6');
   const [selectedFrame, setSelectedFrame] = useState<string>('classic-cream');
+  const [selectedFrameObj, setSelectedFrameObj] = useState<FrameOption | undefined>(undefined);
   const [quantity, setQuantity] = useState<number>(2);
   const [captureMode, setCaptureMode] = useState<CaptureMode>('autoCountdown');
-  const [selectedFilter, setSelectedFilter] = useState<string>('vintage');
+  const [selectedFilter, setSelectedFilter] = useState<string>('original');
+  const [selectedFilterObj, setSelectedFilterObj] = useState<FilterOption | undefined>(undefined);
   const [beautifyEnabled, setBeautifyEnabled] = useState<boolean>(true);
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const [retakeTargetIndex, setRetakeTargetIndex] = useState<number | null>(null);
@@ -124,8 +127,12 @@ export const App: React.FC = () => {
       {/* Step 2/11: Chọn khung ảnh (3.png) */}
       {step === 'frame' && (
         <FavoriFrameScreen
+          selectedSize={selectedSize}
           selectedFrame={selectedFrame}
-          onSelectFrame={setSelectedFrame}
+          onSelectFrame={(id, frameObj) => {
+            setSelectedFrame(id);
+            if (frameObj) setSelectedFrameObj(frameObj);
+          }}
           onNext={() => setStep('quantity')}
           onBack={() => setStep('size')}
         />
@@ -167,7 +174,7 @@ export const App: React.FC = () => {
       {/* Step 7/11: Chụp ảnh & Live View (8.png) */}
       {step === 'liveview' && (
         <FavoriLiveViewScreen
-          totalShots={retakeTargetIndex !== null ? 1 : 4}
+          totalShots={retakeTargetIndex !== null ? 1 : 6}
           mode={captureMode}
           onAllShotsCaptured={(newPhotos) => {
             if (retakeTargetIndex !== null && newPhotos.length > 0) {
@@ -190,7 +197,10 @@ export const App: React.FC = () => {
         <FavoriFilterScreen
           photos={capturedPhotos}
           selectedFilter={selectedFilter}
-          onSelectFilter={setSelectedFilter}
+          onSelectFilter={(id, filterObj) => {
+            setSelectedFilter(id);
+            if (filterObj) setSelectedFilterObj(filterObj);
+          }}
           beautifyEnabled={beautifyEnabled}
           onToggleBeautify={setBeautifyEnabled}
           onNext={() => setStep('photoSelect')}
@@ -202,7 +212,11 @@ export const App: React.FC = () => {
       {step === 'photoSelect' && (
         <FavoriPhotoSelectScreen
           photos={capturedPhotos}
-          maxRetakes={1}
+          frameObj={selectedFrameObj}
+          layoutType={selectedSize}
+          onConfirmSelection={(slotted) => {
+            setCapturedPhotos(slotted);
+          }}
           onRetake={handleRetakeShot}
           onNext={() => setStep('print')}
           onBack={() => setStep('filter')}
@@ -215,7 +229,9 @@ export const App: React.FC = () => {
         <FavoriPrintScreen
           layoutType={selectedSize}
           frameTheme={selectedFrame}
+          frameObj={selectedFrameObj}
           filterId={selectedFilter}
+          filterObj={selectedFilterObj}
           beautifyEnabled={beautifyEnabled}
           copies={quantity}
           photos={capturedPhotos}
