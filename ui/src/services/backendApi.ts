@@ -53,6 +53,9 @@ export interface FrameOption {
   thumbnailUrl: string;
   holes: HoleRectDto[];
   layoutId: string;
+  layoutName?: string;
+  categoryId?: number;
+  categoryName?: string;
   bgColor?: string;
   borderColor?: string;
 }
@@ -165,36 +168,90 @@ const FALLBACK_PRESETS: FilterOption[] = [
   { id: 'vintage_warm', code: 'vintage_warm', name: 'Màu Phim Hoài Niệm', cssFilter: 'sepia(0.3) contrast(1.1) saturate(0.9)' },
 ];
 
-// Fallback frames khi mất kết nối mạng
+// Dữ liệu khung ảnh chính thức từ Backend CMS (http://129.221.221.113:8080/api/frames)
 const FALLBACK_FRAMES: FrameOption[] = [
   {
-    id: 'classic-cream',
-    name: 'Kem Cổ Điển',
-    frameUrl: '',
-    thumbnailUrl: '',
+    id: '1',
+    name: 'Vintage Film Strip 4 Ô (1x4)',
     layoutId: '1x4',
-    bgColor: '#fdfbf7',
-    borderColor: '#e8dcce',
+    layoutName: 'Dải 4 ảnh (1x4 Strips)',
+    categoryId: 4,
+    categoryName: 'Vintage',
+    frameUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145330_5f8054b7eed74fa5b0c34e6031a7bd24.png',
+    thumbnailUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145332_8e4595916ec243a0881e70debe5d3b53.png',
     holes: [
-      { x: 30, y: 40, w: 540, h: 370 },
-      { x: 30, y: 440, w: 540, h: 370 },
-      { x: 30, y: 840, w: 540, h: 370 },
-      { x: 30, y: 1240, w: 540, h: 370 },
+      { x: 30, y: 40, w: 540, h: 370, rotation: 0 },
+      { x: 30, y: 440, w: 540, h: 370, rotation: 0 },
+      { x: 30, y: 840, w: 540, h: 370, rotation: 0 },
+      { x: 30, y: 1240, w: 540, h: 370, rotation: 0 },
     ],
   },
   {
-    id: 'vintage-burgundy',
-    name: 'Đỏ Burgundy',
-    frameUrl: '',
-    thumbnailUrl: '',
-    layoutId: '1x4',
-    bgColor: '#7a0000',
-    borderColor: '#9e1c1c',
+    id: '2',
+    name: 'Summer Vibes Lưới 4 Ô (2x2)',
+    layoutId: '2x2',
+    layoutName: 'Lưới 4 ảnh vuông (2x2 Grid)',
+    categoryId: 1,
+    categoryName: 'Hot Trend',
+    frameUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145333_adb887c3bc79423abfe8b8fd492a778a.png',
+    thumbnailUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145334_9e190ae62582478483c431618c56ff29.png',
     holes: [
-      { x: 30, y: 40, w: 540, h: 370 },
-      { x: 30, y: 440, w: 540, h: 370 },
-      { x: 30, y: 840, w: 540, h: 370 },
-      { x: 30, y: 1240, w: 540, h: 370 },
+      { x: 35, y: 50, w: 550, h: 750, rotation: 0 },
+      { x: 615, y: 50, w: 550, h: 750, rotation: 0 },
+      { x: 35, y: 850, w: 550, h: 750, rotation: 0 },
+      { x: 615, y: 850, w: 550, h: 750, rotation: 0 },
+    ],
+  },
+  {
+    id: '3',
+    name: 'Summer Pastel 6 Ô (2x3)',
+    layoutId: '2x3',
+    layoutName: 'Lưới 6 ảnh (2x3 Postcard)',
+    categoryId: 1,
+    categoryName: 'Hot Trend',
+    frameUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145335_d98a8979cee64db5aa88733b8ef4f415.png',
+    thumbnailUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145335_1654b14c10404898893ed260471f2268.png',
+    holes: [
+      { x: 35, y: 50, w: 550, h: 500, rotation: 0 },
+      { x: 615, y: 50, w: 550, h: 500, rotation: 0 },
+      { x: 35, y: 580, w: 550, h: 500, rotation: 0 },
+      { x: 615, y: 580, w: 550, h: 500, rotation: 0 },
+      { x: 35, y: 1110, w: 550, h: 500, rotation: 0 },
+      { x: 615, y: 1110, w: 550, h: 500, rotation: 0 },
+    ],
+  },
+  {
+    id: '4',
+    name: 'Classic Black 4 Ô (2x2)',
+    layoutId: '2x2',
+    layoutName: 'Lưới 4 ảnh vuông (2x2 Grid)',
+    categoryId: 1,
+    categoryName: 'Hot Trend',
+    frameUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145336_9251b0cb27054706961d16abcd8ec7a6.png',
+    thumbnailUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145337_b9a38a74c6564b81b72b264e80695a52.png',
+    holes: [
+      { x: 35, y: 50, w: 550, h: 750, rotation: 0 },
+      { x: 615, y: 50, w: 550, h: 750, rotation: 0 },
+      { x: 35, y: 850, w: 550, h: 750, rotation: 0 },
+      { x: 615, y: 850, w: 550, h: 750, rotation: 0 },
+    ],
+  },
+  {
+    id: '5',
+    name: 'Classic Grid 6 Ô (2x3)',
+    layoutId: '2x3',
+    layoutName: 'Lưới 6 ảnh (2x3 Postcard)',
+    categoryId: 1,
+    categoryName: 'Hot Trend',
+    frameUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145337_4bf1448a22e64befb10790b6f65b0d4f.png',
+    thumbnailUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145338_31b0f886dd204c4d81cce153676cb05d.png',
+    holes: [
+      { x: 35, y: 50, w: 550, h: 500, rotation: 0 },
+      { x: 615, y: 50, w: 550, h: 500, rotation: 0 },
+      { x: 35, y: 580, w: 550, h: 500, rotation: 0 },
+      { x: 615, y: 580, w: 550, h: 500, rotation: 0 },
+      { x: 35, y: 1110, w: 550, h: 500, rotation: 0 },
+      { x: 615, y: 1110, w: 550, h: 500, rotation: 0 },
     ],
   },
 ];
@@ -318,8 +375,20 @@ export const backendApi = {
           thumbnailUrl,
           holes,
           layoutId: f.layoutId,
+          layoutName: f.layoutName,
+          categoryId: f.categoryId,
+          categoryName: f.categoryName,
         };
       });
+    }
+
+    // Nếu không kết nối được mạng, dùng FALLBACK_FRAMES (5 khung ảnh chính thức từ CMS)
+    if (layoutOrSize && layoutOrSize !== 'all') {
+      const targetLayouts = mapSizeToLayoutIds(layoutOrSize);
+      const filteredFallback = targetLayouts.length > 0
+        ? FALLBACK_FRAMES.filter((f) => targetLayouts.includes((f.layoutId || '').toLowerCase()))
+        : FALLBACK_FRAMES;
+      return filteredFallback.length > 0 ? filteredFallback : FALLBACK_FRAMES;
     }
 
     return FALLBACK_FRAMES;

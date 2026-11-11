@@ -91,11 +91,11 @@ class IpcBridge {
         // Fallback safety timeout: never hang the kiosk UI
         const timer = setTimeout(() => {
           if (this.pendingRequests.has(id)) {
-            console.warn(`[IPC] Command '${command}' timeout after 4s. Using fallback mock.`);
+            console.warn(`[IPC] Command '${command}' timeout after 8s. Using fallback mock.`);
             this.pendingRequests.delete(id);
             resolve(this.handleMockCommand<TResult>(command, payload));
           }
-        }, 4000);
+        }, 8000);
 
         this.pendingRequests.set(id, {
           resolve: (val) => {
@@ -155,6 +155,83 @@ class IpcBridge {
             break;
           case 'verify_admin_pin':
             resolve((payload?.pin === '8888' || payload?.pin === '1234') as any);
+            break;
+          case 'get_frames':
+            resolve([
+              {
+                id: 1,
+                layoutId: "1x4",
+                layoutName: "Dải 4 ảnh (1x4 Strips)",
+                categoryId: 4,
+                categoryName: "Vintage",
+                name: "Vintage Film Strip 4 Ô (1x4)",
+                frameUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145330_5f8054b7eed74fa5b0c34e6031a7bd24.png",
+                thumbnailUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145332_8e4595916ec243a0881e70debe5d3b53.png",
+                holes: [{ x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }],
+                isActive: true,
+                displayOrder: 1,
+              },
+              {
+                id: 2,
+                layoutId: "2x2",
+                layoutName: "Lưới 4 ảnh vuông (2x2 Grid)",
+                categoryId: 1,
+                categoryName: "Hot Trend",
+                name: "Summer Vibes Lưới 4 Ô (2x2)",
+                frameUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145333_adb887c3bc79423abfe8b8fd492a778a.png",
+                thumbnailUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145334_9e190ae62582478483c431618c56ff29.png",
+                holes: [{ x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }],
+                isActive: true,
+                displayOrder: 2,
+              },
+              {
+                id: 3,
+                layoutId: "2x3",
+                layoutName: "Lưới 6 ảnh (2x3 Postcard)",
+                categoryId: 1,
+                categoryName: "Hot Trend",
+                name: "Summer Pastel 6 Ô (2x3)",
+                frameUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145335_d98a8979cee64db5aa88733b8ef4f415.png",
+                thumbnailUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145335_1654b14c10404898893ed260471f2268.png",
+                holes: [{ x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }],
+                isActive: true,
+                displayOrder: 3,
+              },
+              {
+                id: 4,
+                layoutId: "2x2",
+                layoutName: "Lưới 4 ảnh vuông (2x2 Grid)",
+                categoryId: 1,
+                categoryName: "Hot Trend",
+                name: "Classic Black 4 Ô (2x2)",
+                frameUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145336_9251b0cb27054706961d16abcd8ec7a6.png",
+                thumbnailUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145337_b9a38a74c6564b81b72b264e80695a52.png",
+                holes: [{ x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }],
+                isActive: true,
+                displayOrder: 4,
+              },
+              {
+                id: 5,
+                layoutId: "2x3",
+                layoutName: "Lưới 6 ảnh (2x3 Postcard)",
+                categoryId: 1,
+                categoryName: "Hot Trend",
+                name: "Classic Grid 6 Ô (2x3)",
+                frameUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145337_4bf1448a22e64befb10790b6f65b0d4f.png",
+                thumbnailUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145338_31b0f886dd204c4d81cce153676cb05d.png",
+                holes: [{ x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }],
+                isActive: true,
+                displayOrder: 5,
+              }
+            ] as any);
+            break;
+          case 'get_presets':
+            resolve([
+              { id: 1, code: 'original', name: 'Ảnh Gốc (Natural)', category: 'Color', type: 'CssMatrix', intensityDefault: 1, isActive: true, displayOrder: 1 },
+              { id: 2, code: 'classic_bw', name: 'Đen Trắng Cổ Điển', category: 'Vintage', type: 'CssMatrix', configJson: '{"grayscale":1,"contrast":1.2}', intensityDefault: 1, isActive: true, displayOrder: 2 },
+              { id: 3, code: 'korean_soft', name: 'Hàn Quốc Trong Trẻo', category: 'Modern', type: 'CssMatrix', configJson: '{"contrast":0.95,"brightness":1.05,"saturation":1.1}', intensityDefault: 1, isActive: true, displayOrder: 3 },
+              { id: 4, code: 'vintage_warm', name: 'Màu Phim Hoài Niệm', category: 'Film', type: 'CssMatrix', configJson: '{"sepia":0.3,"contrast":1.1,"saturation":0.9}', intensityDefault: 1, isActive: true, displayOrder: 4 }
+            ] as any);
             break;
           case 'start_capture_session':
             resolve({ sessionId: `mock_session_${Date.now()}` } as any);

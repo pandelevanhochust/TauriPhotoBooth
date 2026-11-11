@@ -32,7 +32,10 @@ public class NativeSkiaCompositor : IImageComposer
             // 1. Draw Background
             canvas.Clear(SKColors.White);
 
-            // 2. Render each hole with Center-Crop
+            // Create ColorFilter from template.FilterCode if specified
+            using var colorFilter = GetColorFilter(template.FilterCode);
+
+            // 2. Render each hole with Center-Crop and ColorFilter
             for (int i = 0; i < template.Holes.Count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -45,8 +48,8 @@ public class NativeSkiaCompositor : IImageComposer
                 using var rawBitmap = SKBitmap.Decode(photoPath);
                 if (rawBitmap == null) continue;
 
-                // Render with Center-Crop Cover into hole coordinates
-                RenderCenterCrop(canvas, rawBitmap, hole.X, hole.Y, hole.Width, hole.Height, hole.CornerRadius);
+                // Render with Center-Crop Cover and preset color filter into hole coordinates
+                RenderCenterCrop(canvas, rawBitmap, hole.X, hole.Y, hole.Width, hole.Height, hole.CornerRadius, colorFilter);
             }
 
             // 3. Render Frame Overlay if template image exists
@@ -93,7 +96,7 @@ public class NativeSkiaCompositor : IImageComposer
         }, cancellationToken);
     }
 
-    private static void RenderCenterCrop(SKCanvas canvas, SKBitmap bitmap, int x, int y, int width, int height, int cornerRadius)
+    private static void RenderCenterCrop(SKCanvas canvas, SKBitmap bitmap, int x, int y, int width, int height, int cornerRadius, SKColorFilter? colorFilter = null)
     {
         float targetRatio = (float)width / height;
         float srcRatio = (float)bitmap.Width / bitmap.Height;
@@ -117,7 +120,8 @@ public class NativeSkiaCompositor : IImageComposer
         var destRect = new SKRect(x, y, x + width, y + height);
         using var paint = new SKPaint
         {
-            IsAntialias = true
+            IsAntialias = true,
+            ColorFilter = colorFilter
         };
 
         if (cornerRadius > 0)
@@ -133,5 +137,59 @@ public class NativeSkiaCompositor : IImageComposer
         {
             canvas.DrawBitmap(bitmap, srcRect, destRect, paint);
         }
+    }
+
+    private static SKColorFilter? GetColorFilter(string? filterCode)
+    {
+        if (string.IsNullOrWhiteSpace(filterCode)) return null;
+
+        string code = filterCode.ToLowerInvariant().Trim();
+        if (code == "original" || code == "none" || code == "natural") return null;
+
+        if (code == "classic_bw" || code.Contains("bw") || code.Contains("gray") || code.Contains("den_trang"))
+        {
+            // Grayscale with contrast boost
+            float c = 1.25f;
+            float r = 0.2126f * c;
+            float g = 0.7152f * c;
+            float b = 0.0722f * c;
+            float offset = (1f - c) * 64f;
+            float[] bwMatrix = new float[]
+            {
+                r, g, b, 0, offset,
+                r, g, b, 0, offset,
+                r, g, b, 0, offset,
+                0, 0, 0, 1, 0
+            };
+            return SKColorFilter.CreateColorMatrix(bwMatrix);
+        }
+
+        if (code == "vintage_warm" || code.Contains("vintage") || code.Contains("warm") || code.Contains("hoai_niem"))
+        {
+            // Warm film / Sepia nostalgic tone
+            float[] sepiaMatrix = new float[]
+            {
+                0.45f, 0.72f, 0.18f, 0, 15f,
+                0.35f, 0.68f, 0.16f, 0, 10f,
+                0.27f, 0.53f, 0.13f, 0, -5f,
+                0,     0,     0,     1, 0
+            };
+            return SKColorFilter.CreateColorMatrix(sepiaMatrix);
+        }
+
+        if (code == "korean_soft" || code.Contains("korean") || code.Contains("soft") || code.Contains("trong_treo"))
+        {
+            // Korean Glow / Soft pastel brightening
+            float[] softMatrix = new float[]
+            {
+                1.04f, 0.02f, 0.02f, 0, 10f,
+                0.02f, 1.04f, 0.02f, 0, 10f,
+                0.02f, 0.02f, 1.06f, 0, 14f,
+                0,     0,     0,     1, 0
+            };
+            return SKColorFilter.CreateColorMatrix(softMatrix);
+        }
+
+        return null;
     }
 }

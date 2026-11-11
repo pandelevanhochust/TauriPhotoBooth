@@ -113,6 +113,21 @@ public partial class MainWindow : Window
             await _dbService.InitializeAsync();
             App.Log("[INFO] Step 2.2: DB initialized");
 
+            // Prefetch CMS frames & presets in background so they are ready instantly for UI
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await GetOrFetchFramesJsonAsync();
+                    await GetOrFetchPresetsJsonAsync();
+                    App.Log("[INFO] CMS Frames and Presets prefetch completed.");
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[WARN] CMS prefetch background error: {ex.Message}");
+                }
+            });
+
             // Start Watchdog Heartbeat
             _heartbeatFile = Path.Combine(baseDataDir, "heartbeat.txt");
             _heartbeatTimer = new System.Threading.Timer(_ =>
@@ -324,11 +339,8 @@ public partial class MainWindow : Window
                 case "get_frames":
                     try
                     {
-                        using var httpFrames = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-                        string framesUrl = "http://129.221.221.113:8080/api/frames?onlyActive=true";
-                        string jsonFrames = await httpFrames.GetStringAsync(framesUrl);
-                        using var docFrames = JsonDocument.Parse(jsonFrames);
-                        SendSuccessResponse(id, docFrames.RootElement.Clone());
+                        string framesJson = await GetOrFetchFramesJsonAsync();
+                        SendRawSuccessResponse(id, framesJson);
                     }
                     catch (Exception ex)
                     {
@@ -340,11 +352,8 @@ public partial class MainWindow : Window
                 case "get_presets":
                     try
                     {
-                        using var httpPresets = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
-                        string presetsUrl = "http://129.221.221.113:8080/api/presets?onlyActive=true";
-                        string jsonPresets = await httpPresets.GetStringAsync(presetsUrl);
-                        using var docPresets = JsonDocument.Parse(jsonPresets);
-                        SendSuccessResponse(id, docPresets.RootElement.Clone());
+                        string presetsJson = await GetOrFetchPresetsJsonAsync();
+                        SendRawSuccessResponse(id, presetsJson);
                     }
                     catch (Exception ex)
                     {
@@ -504,6 +513,7 @@ public partial class MainWindow : Window
                         CanvasWidth = 1200,
                         CanvasHeight = 1800,
                         SupportedPaperType = layoutType == "strip2x6" ? PaperType.DoubleStrip2x6 : PaperType.Card4x6,
+                        FilterCode = filterCode,
                         Holes = new List<HoleLocation>()
                     };
 
@@ -735,6 +745,106 @@ public partial class MainWindow : Window
         {
             SendErrorResponse(id, ex.Message);
         }
+    }
+
+    private static string? _cachedFramesJson;
+    private static string? _cachedPresetsJson;
+    private static readonly string FramesCacheFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data", "cached_frames.json");
+    private static readonly string PresetsCacheFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data", "cached_presets.json");
+
+    private async Task<string> GetOrFetchFramesJsonAsync()
+    {
+        if (!string.IsNullOrEmpty(_cachedFramesJson)) return _cachedFramesJson;
+
+        if (File.Exists(FramesCacheFilePath))
+        {
+            try { _cachedFramesJson = await File.ReadAllTextAsync(FramesCacheFilePath); } catch { }
+        }
+
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            string fetched = await http.GetStringAsync("http://129.221.221.113:8080/api/frames?onlyActive=true");
+            if (!string.IsNullOrWhiteSpace(fetched) && fetched.TrimStart().StartsWith("["))
+            {
+                _cachedFramesJson = fetched;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        string dir = Path.GetDirectoryName(FramesCacheFilePath)!;
+                        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                        await File.WriteAllTextAsync(FramesCacheFilePath, fetched);
+                    }
+                    catch { }
+                });
+                return fetched;
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WARN] Fetch frames from CMS failed: {ex.Message}");
+        }
+
+        if (!string.IsNullOrEmpty(_cachedFramesJson)) return _cachedFramesJson;
+        throw new InvalidOperationException("Could not fetch frames and no cache available.");
+    }
+
+    private async Task<string> GetOrFetchPresetsJsonAsync()
+    {
+        if (!string.IsNullOrEmpty(_cachedPresetsJson)) return _cachedPresetsJson;
+
+        if (File.Exists(PresetsCacheFilePath))
+        {
+            try { _cachedPresetsJson = await File.ReadAllTextAsync(PresetsCacheFilePath); } catch { }
+        }
+
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            string fetched = await http.GetStringAsync("http://129.221.221.113:8080/api/presets?onlyActive=true");
+            if (!string.IsNullOrWhiteSpace(fetched) && fetched.TrimStart().StartsWith("["))
+            {
+                _cachedPresetsJson = fetched;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        string dir = Path.GetDirectoryName(PresetsCacheFilePath)!;
+                        if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                        await File.WriteAllTextAsync(PresetsCacheFilePath, fetched);
+                    }
+                    catch { }
+                });
+                return fetched;
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WARN] Fetch presets from CMS failed: {ex.Message}");
+        }
+
+        if (!string.IsNullOrEmpty(_cachedPresetsJson)) return _cachedPresetsJson;
+        throw new InvalidOperationException("Could not fetch presets and no cache available.");
+    }
+
+    private void SendRawSuccessResponse(string id, string rawJsonData)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            try
+            {
+                if (MainWebView?.CoreWebView2 != null)
+                {
+                    string res = $"{{\"id\":\"{id}\",\"success\":true,\"data\":{rawJsonData}}}";
+                    MainWebView.CoreWebView2.PostWebMessageAsJson(res);
+                }
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[WARN] SendRawSuccessResponse failed: {ex.Message}");
+            }
+        });
     }
 
     private void SendSuccessResponse(string id, object? data)

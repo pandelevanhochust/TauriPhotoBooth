@@ -232,6 +232,7 @@ namespace PhotoBooth.Core.Models
         public int CanvasHeight { get; set; } = 1800;
         public int Dpi { get; set; } = 300;
         public string OverlayImagePath { get; set; } = string.Empty;
+        public string FilterCode { get; set; } = string.Empty;
         public List<HoleLocation> Holes { get; set; } = new();
     }
 

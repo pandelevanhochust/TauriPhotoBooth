@@ -7,6 +7,7 @@ interface FavoriPhotoSelectScreenProps {
   photos: string[];
   frameObj?: FrameOption;
   layoutType?: string;
+  filterCss?: string;
   onConfirmSelection?: (slottedPhotos: string[]) => void;
   maxRetakes?: number;
   onRetake?: (index: number) => void;
@@ -18,6 +19,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
   photos,
   frameObj,
   layoutType = 'strip2x6',
+  filterCss,
   onConfirmSelection,
   onNext,
   onBack,
@@ -173,6 +175,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
                         src={photo}
                         alt={`Slot ${sIdx + 1}`}
                         className="w-full h-full object-cover pointer-events-none"
+                        style={{ filter: filterCss || 'none' }}
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-neutral-400 text-xs">
@@ -264,6 +267,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
                       src={photo}
                       alt={`Shot ${pIdx + 1}`}
                       className="w-full h-full object-cover"
+                      style={{ filter: filterCss || 'none' }}
                       loading="lazy"
                     />
 

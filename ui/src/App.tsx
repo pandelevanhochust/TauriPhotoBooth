@@ -131,7 +131,12 @@ export const App: React.FC = () => {
           selectedFrame={selectedFrame}
           onSelectFrame={(id, frameObj) => {
             setSelectedFrame(id);
-            if (frameObj) setSelectedFrameObj(frameObj);
+            if (frameObj) {
+              setSelectedFrameObj(frameObj);
+              if (frameObj.layoutId === '1x4') setSelectedSize('strip2x6');
+              else if (frameObj.layoutId === '2x2') setSelectedSize('postcard4x6');
+              else if (frameObj.layoutId === '2x3') setSelectedSize('special4x6');
+            }
           }}
           onNext={() => setStep('quantity')}
           onBack={() => setStep('size')}
@@ -214,6 +219,7 @@ export const App: React.FC = () => {
           photos={capturedPhotos}
           frameObj={selectedFrameObj}
           layoutType={selectedSize}
+          filterCss={selectedFilterObj?.cssFilter}
           onConfirmSelection={(slotted) => {
             setCapturedPhotos(slotted);
           }}
