@@ -65,15 +65,16 @@ public class NativeSkiaCompositor : IImageComposer
             }
 
             // 4. If Strip2x6 layout and duplicate enabled, mirror/clone left strip to right strip
-            if (template.SupportedPaperType == PaperType.DoubleStrip2x6 && targetWidth == 1200)
+            if (template.SupportedPaperType == PaperType.DoubleStrip2x6 && targetWidth > 0)
             {
-                // Left strip occupies X: 0 to 600, right strip X: 600 to 1200
+                // Left strip occupies X: 0 to halfW, right strip X: halfW to targetWidth
+                int halfW = targetWidth / 2;
                 using var currentSnap = surface.Snapshot();
                 using var leftCrop = SKBitmap.FromImage(currentSnap);
                 if (leftCrop != null)
                 {
-                    var srcRect = new SKRect(0, 0, 600, targetHeight);
-                    var destRect = new SKRect(600, 0, 1200, targetHeight);
+                    var srcRect = new SKRect(0, 0, halfW, targetHeight);
+                    var destRect = new SKRect(halfW, 0, targetWidth, targetHeight);
                     using var paint = new SKPaint();
                     canvas.DrawBitmap(leftCrop, srcRect, destRect, paint);
                 }

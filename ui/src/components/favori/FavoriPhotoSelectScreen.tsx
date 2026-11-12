@@ -33,18 +33,60 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
     return '1x4';
   }, [frameObj, layoutType]);
 
+  // Determine holes array from frameObj or fallback
+  const holes = React.useMemo(() => {
+    if (frameObj?.holes && frameObj.holes.length > 0) {
+      return frameObj.holes;
+    }
+    if (effectiveLayout === '2x3') {
+      return [
+        { x: 106, y: 421, w: 1088, h: 880 },
+        { x: 1204, y: 421, w: 1088, h: 880 },
+        { x: 106, y: 1314, w: 1088, h: 880 },
+        { x: 1204, y: 1314, w: 1088, h: 880 },
+        { x: 106, y: 2208, w: 1088, h: 880 },
+        { x: 1204, y: 2208, w: 1088, h: 880 },
+      ];
+    }
+    if (effectiveLayout === '1x4') {
+      return [
+        { x: 545, y: 173, w: 1310, h: 833 },
+        { x: 545, y: 1006, w: 1310, h: 794 },
+        { x: 545, y: 1800, w: 1310, h: 797 },
+        { x: 545, y: 2597, w: 1310, h: 830 },
+      ];
+    }
+    // Default 2x2
+    return [
+      { x: 142, y: 792, w: 1016, h: 1186 },
+      { x: 1242, y: 792, w: 1016, h: 1186 },
+      { x: 142, y: 2057, w: 1016, h: 1186 },
+      { x: 1242, y: 2057, w: 1016, h: 1186 },
+    ];
+  }, [frameObj, effectiveLayout]);
+
   // Determine how many slots the frame has
   const slotCount = React.useMemo(() => {
-    if (frameObj?.holes && frameObj.holes.length > 0) {
-      return frameObj.holes.length;
-    }
+    if (holes.length > 0) return holes.length;
     if (effectiveLayout === '2x3') return 6;
     if (effectiveLayout === '1x2') return 2;
     return 4; // default 1x4 or 2x2
-  }, [frameObj, effectiveLayout]);
+  }, [holes, effectiveLayout]);
 
-  const isGrid2x2 = effectiveLayout === '2x2';
-  const isGrid2x3 = effectiveLayout === '2x3';
+  // Determine reference canvas dimensions from holes
+  const canvasDimensions = React.useMemo(() => {
+    let maxX = 0;
+    let maxY = 0;
+    holes.forEach((h) => {
+      if (h.x + h.w > maxX) maxX = h.x + h.w;
+      if (h.y + h.h > maxY) maxY = h.y + h.h;
+    });
+    // Standard CMS Frame PNG canvas is 2400 x 3600 (aspect 2:3)
+    const w = maxX > 1500 ? 2400 : (maxX > 0 ? 1200 : 2400);
+    const h = maxY > 2000 ? 3600 : (maxY > 0 ? 1800 : 3600);
+    return { w, h };
+  }, [holes]);
+
   const isStrip = effectiveLayout === '1x4';
 
   // Slotted photos state: array of length `slotCount`
@@ -138,80 +180,108 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
             Chạm vào ô bên dưới, sau đó chọn ảnh bên phải để gán
           </p>
 
-          {/* Miniature Frame Container - True Print Aspect Ratio */}
+          {/* Miniature Frame Container - Absolute Hole Mapping with True Print Ratio */}
           <div 
-            className={`rounded-2xl border-2 border-[#bfa282]/60 shadow-xl flex items-center justify-center relative overflow-hidden transition-all duration-300 ${
+            className={`rounded-2xl border-2 border-[#bfa282]/60 shadow-2xl relative overflow-hidden transition-all duration-300 ${
               isStrip
-                ? 'w-[190px] h-[570px] aspect-[1/3]'
+                ? 'w-[200px] h-[600px] aspect-[1/3]'
                 : 'w-[340px] h-[510px] aspect-[2/3]'
             }`}
             style={{
-              backgroundColor: frameObj?.bgColor || '#fcfbf8',
+              backgroundColor: frameObj?.bgColor || '#1a1a1a',
+              aspectRatio: `${canvasDimensions.w} / ${canvasDimensions.h}`,
             }}
           >
-            {/* Layer 1: Photo Slots Grid */}
-            <div
-              className={`w-full h-full z-0 ${
-                isGrid2x2
-                  ? 'grid grid-cols-2 gap-3 px-3.5 py-8 content-center justify-center'
-                  : isGrid2x3
-                  ? 'grid grid-cols-2 gap-2 px-3 py-6 content-center justify-center'
-                  : 'flex flex-col justify-between py-6 px-3'
-              }`}
-            >
-              {slottedPhotos.map((photo, sIdx) => {
-                const isActive = activeSlot === sIdx;
-                return (
-                  <div
-                    key={sIdx}
-                    onClick={() => setActiveSlot(sIdx)}
-                    className={`relative rounded-xl overflow-hidden cursor-pointer transition-all duration-200 border-2 bg-neutral-900 group aspect-[4/3] ${
-                      isActive
-                        ? 'ring-4 ring-amber-400 border-amber-500 scale-[1.03] shadow-xl z-20'
-                        : 'border-neutral-300 hover:border-[#7a0000]/60 z-0'
-                    }`}
-                  >
-                    {photo ? (
-                      <img
-                        src={photo}
-                        alt={`Slot ${sIdx + 1}`}
-                        className="w-full h-full object-cover object-center pointer-events-none"
-                        style={{ filter: filterCss || 'none' }}
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-neutral-400 text-xs font-medium">
-                        Ô {sIdx + 1} trống
-                      </div>
-                    )}
+            {/* Layer 1: Photo Slots (Dưới Frame Overlay) - Căn chỉnh chính xác từng % theo Holes */}
+            {holes.map((hole, sIdx) => {
+              if (sIdx >= slotCount) return null;
+              const photo = slottedPhotos[sIdx];
+              const leftPct = (hole.x / canvasDimensions.w) * 100;
+              const topPct = (hole.y / canvasDimensions.h) * 100;
+              const widthPct = (hole.w / canvasDimensions.w) * 100;
+              const heightPct = (hole.h / canvasDimensions.h) * 100;
 
-                    {/* Slot Label Badge */}
-                    <div
-                      className={`absolute top-1.5 left-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider backdrop-blur-md shadow z-30 ${
-                        isActive
-                          ? 'bg-amber-400 text-neutral-900'
-                          : 'bg-black/60 text-white'
-                      }`}
-                    >
+              return (
+                <div
+                  key={`photo-slot-${sIdx}`}
+                  style={{
+                    position: 'absolute',
+                    left: `${leftPct}%`,
+                    top: `${topPct}%`,
+                    width: `${widthPct}%`,
+                    height: `${heightPct}%`,
+                  }}
+                  className="overflow-hidden bg-neutral-900 z-10 flex items-center justify-center select-none"
+                >
+                  {photo ? (
+                    <img
+                      src={photo}
+                      alt={`Slot ${sIdx + 1}`}
+                      className="w-full h-full object-cover object-center pointer-events-none"
+                      style={{ filter: filterCss || 'none' }}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-neutral-400 text-xs font-medium">
                       Ô {sIdx + 1}
                     </div>
+                  )}
+                </div>
+              );
+            })}
 
-                    {/* Active Target Indicator Pulse */}
-                    {isActive && (
-                      <div className="absolute inset-0 border-2 border-amber-400 rounded-xl pointer-events-none animate-pulse z-30" />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Layer 2: Frame Overlay */}
+            {/* Layer 2: Frame Overlay PNG - Khung viền đè lên trên, các lỗ trong suốt để lộ ảnh chụp */}
             {(frameObj?.frameUrl || frameObj?.thumbnailUrl) && (
               <img
                 src={frameObj.frameUrl || frameObj.thumbnailUrl}
                 alt="Frame Overlay"
-                className="absolute inset-0 w-full h-full object-contain pointer-events-none z-10 select-none opacity-80"
+                className="absolute inset-0 w-full h-full object-fill pointer-events-none z-20 select-none"
               />
             )}
+
+            {/* Layer 3: Interactive Hitboxes & Badges - Cho phép tương tác chọn ô & hiển thị viền Active */}
+            {holes.map((hole, sIdx) => {
+              if (sIdx >= slotCount) return null;
+              const isActive = activeSlot === sIdx;
+              const leftPct = (hole.x / canvasDimensions.w) * 100;
+              const topPct = (hole.y / canvasDimensions.h) * 100;
+              const widthPct = (hole.w / canvasDimensions.w) * 100;
+              const heightPct = (hole.h / canvasDimensions.h) * 100;
+
+              return (
+                <div
+                  key={`hitbox-${sIdx}`}
+                  onClick={() => setActiveSlot(sIdx)}
+                  style={{
+                    position: 'absolute',
+                    left: `${leftPct}%`,
+                    top: `${topPct}%`,
+                    width: `${widthPct}%`,
+                    height: `${heightPct}%`,
+                  }}
+                  className={`cursor-pointer rounded-sm transition-all duration-200 z-30 group ${
+                    isActive
+                      ? 'ring-4 ring-amber-400 shadow-2xl scale-[1.01]'
+                      : 'hover:ring-2 hover:ring-[#7a0000]/60'
+                  }`}
+                >
+                  {/* Slot Label Badge */}
+                  <div
+                    className={`absolute top-1.5 left-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-wider backdrop-blur-md shadow z-30 ${
+                      isActive
+                        ? 'bg-amber-400 text-neutral-900 ring-2 ring-amber-500'
+                        : 'bg-black/70 text-white'
+                    }`}
+                  >
+                    Ô {sIdx + 1}
+                  </div>
+
+                  {/* Active Target Indicator Pulse */}
+                  {isActive && (
+                    <div className="absolute inset-0 border-2 border-amber-400 rounded-sm pointer-events-none animate-pulse z-30" />
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {/* Quick Action Tools */}

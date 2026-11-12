@@ -510,8 +510,8 @@ public partial class MainWindow : Window
                     {
                         TemplateId = layoutType,
                         Name = layoutType == "strip2x6" ? "Dual 2x6 Strip" : "Postcard 4x6",
-                        CanvasWidth = 1200,
-                        CanvasHeight = 1800,
+                        CanvasWidth = 2400,
+                        CanvasHeight = 3600,
                         SupportedPaperType = layoutType == "strip2x6" ? PaperType.DoubleStrip2x6 : PaperType.Card4x6,
                         FilterCode = filterCode,
                         Holes = new List<HoleLocation>()
@@ -525,8 +525,8 @@ public partial class MainWindow : Window
                         {
                             int x = h.TryGetProperty("x", out var xProp) ? xProp.GetInt32() : 0;
                             int y = h.TryGetProperty("y", out var yProp) ? yProp.GetInt32() : 0;
-                            int w = h.TryGetProperty("w", out var wProp) ? wProp.GetInt32() : 540;
-                            int hVal = h.TryGetProperty("h", out var hProp) ? hProp.GetInt32() : 370;
+                            int w = h.TryGetProperty("w", out var wProp) ? wProp.GetInt32() : 1016;
+                            int hVal = h.TryGetProperty("h", out var hProp) ? hProp.GetInt32() : 1186;
                             template.Holes.Add(new HoleLocation
                             {
                                 ShotIndex = shotIdx++,
@@ -540,34 +540,19 @@ public partial class MainWindow : Window
                     }
                     else if (template.SupportedPaperType == PaperType.DoubleStrip2x6)
                     {
-                        // 4 vertical holes on left strip (0 to 600 width)
-                        int slotW = 540;
-                        int slotH = 370;
-                        int startX = 30;
-                        int startY = 40;
-                        int gapY = 30;
-                        for (int i = 0; i < 4; i++)
-                        {
-                            template.Holes.Add(new HoleLocation
-                            {
-                                ShotIndex = i + 1,
-                                X = startX,
-                                Y = startY + i * (slotH + gapY),
-                                Width = slotW,
-                                Height = slotH,
-                                CornerRadius = 12
-                            });
-                        }
+                        // 4 vertical holes on left strip (0 to 1200 on 2400 width)
+                        template.Holes.Add(new HoleLocation { ShotIndex = 1, X = 545, Y = 173, Width = 1310, Height = 833, CornerRadius = 12 });
+                        template.Holes.Add(new HoleLocation { ShotIndex = 2, X = 545, Y = 1006, Width = 1310, Height = 794, CornerRadius = 12 });
+                        template.Holes.Add(new HoleLocation { ShotIndex = 3, X = 545, Y = 1800, Width = 1310, Height = 797, CornerRadius = 12 });
+                        template.Holes.Add(new HoleLocation { ShotIndex = 4, X = 545, Y = 2597, Width = 1310, Height = 830, CornerRadius = 12 });
                     }
                     else
                     {
-                        // 4 holes 2x2 grid for 4x6 postcard
-                        int slotW = 550;
-                        int slotH = 750;
-                        template.Holes.Add(new HoleLocation { ShotIndex = 1, X = 35, Y = 50, Width = slotW, Height = slotH, CornerRadius = 12 });
-                        template.Holes.Add(new HoleLocation { ShotIndex = 2, X = 615, Y = 50, Width = slotW, Height = slotH, CornerRadius = 12 });
-                        template.Holes.Add(new HoleLocation { ShotIndex = 3, X = 35, Y = 850, Width = slotW, Height = slotH, CornerRadius = 12 });
-                        template.Holes.Add(new HoleLocation { ShotIndex = 4, X = 615, Y = 850, Width = slotW, Height = slotH, CornerRadius = 12 });
+                        // 4 holes 2x2 grid for 4x6 postcard (2400x3600 canvas)
+                        template.Holes.Add(new HoleLocation { ShotIndex = 1, X = 142, Y = 792, Width = 1016, Height = 1186, CornerRadius = 12 });
+                        template.Holes.Add(new HoleLocation { ShotIndex = 2, X = 1242, Y = 792, Width = 1016, Height = 1186, CornerRadius = 12 });
+                        template.Holes.Add(new HoleLocation { ShotIndex = 3, X = 142, Y = 2057, Width = 1016, Height = 1186, CornerRadius = 12 });
+                        template.Holes.Add(new HoleLocation { ShotIndex = 4, X = 1242, Y = 2057, Width = 1016, Height = 1186, CornerRadius = 12 });
                     }
 
                     // Check overlay frame image (download or local cache)
@@ -597,6 +582,25 @@ public partial class MainWindow : Window
                             {
                                 App.Log($"[WARN] Could not fetch overlay frame from {frameUrl}: {ex.Message}");
                             }
+                        }
+                    }
+
+                    // Tự động giải mã kích thước Canvas thực tế của Frame Overlay PNG
+                    if (!string.IsNullOrEmpty(template.OverlayImagePath) && File.Exists(template.OverlayImagePath))
+                    {
+                        try
+                        {
+                            using var codec = SkiaSharp.SKCodec.Create(template.OverlayImagePath);
+                            if (codec != null && codec.Info.Width > 0 && codec.Info.Height > 0)
+                            {
+                                template.CanvasWidth = codec.Info.Width;
+                                template.CanvasHeight = codec.Info.Height;
+                                App.Log($"[INFO] Detected Frame dimensions from PNG: {template.CanvasWidth} x {template.CanvasHeight}");
+                            }
+                        }
+                        catch (Exception cEx)
+                        {
+                            App.Log($"[WARN] Failed to read Frame dimensions: {cEx.Message}");
                         }
                     }
 

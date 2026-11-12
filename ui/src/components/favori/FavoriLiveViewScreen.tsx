@@ -150,8 +150,20 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
     }
 
     if (!photoData) {
-      // Fallback placeholder pattern
-      photoData = `https://picsum.photos/seed/shot_${Date.now()}/800/1200`;
+      // Offline fallback canvas data URL (không phụ thuộc internet bên ngoài)
+      const c = document.createElement('canvas');
+      c.width = 1200;
+      c.height = 800;
+      const ctx = c.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = currentShot % 2 === 0 ? '#f5ece2' : '#e8dcce';
+        ctx.fillRect(0, 0, 1200, 800);
+        ctx.fillStyle = '#7a0000';
+        ctx.font = 'bold 44px serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`Favori Photo Shot #${currentShot}`, 600, 400);
+        photoData = c.toDataURL('image/jpeg', 0.9);
+      }
     }
 
     const updated = [...capturedPhotos, photoData];
