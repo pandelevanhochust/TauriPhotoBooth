@@ -148,46 +148,38 @@ public class NativeSkiaCompositor : IImageComposer
 
         if (code == "classic_bw" || code.Contains("bw") || code.Contains("gray") || code.Contains("den_trang"))
         {
-            // Grayscale with contrast boost
-            float c = 1.25f;
-            float r = 0.2126f * c;
-            float g = 0.7152f * c;
-            float b = 0.0722f * c;
-            float offset = (1f - c) * 64f;
-            float[] bwMatrix = new float[]
+            // Grayscale chuẩn ITU-R BT.709 không làm đen hay cháy sáng ảnh
+            return SKColorFilter.CreateColorMatrix(new float[]
             {
-                r, g, b, 0, offset,
-                r, g, b, 0, offset,
-                r, g, b, 0, offset,
-                0, 0, 0, 1, 0
-            };
-            return SKColorFilter.CreateColorMatrix(bwMatrix);
+                0.2126f, 0.7152f, 0.0722f, 0, 0,
+                0.2126f, 0.7152f, 0.0722f, 0, 0,
+                0.2126f, 0.7152f, 0.0722f, 0, 0,
+                0,       0,       0,       1, 0
+            });
         }
 
         if (code == "vintage_warm" || code.Contains("vintage") || code.Contains("warm") || code.Contains("hoai_niem"))
         {
-            // Warm film / Sepia nostalgic tone
-            float[] sepiaMatrix = new float[]
+            // Warm Film / Sepia chuẩn theo tiêu chuẩn SVG/CSS Sepia filter (không bị vàng chói lọi)
+            return SKColorFilter.CreateColorMatrix(new float[]
             {
-                0.45f, 0.72f, 0.18f, 0, 15f,
-                0.35f, 0.68f, 0.16f, 0, 10f,
-                0.27f, 0.53f, 0.13f, 0, -5f,
+                0.78f, 0.18f, 0.04f, 0, 0.03f,
+                0.05f, 0.75f, 0.20f, 0, 0.02f,
+                0.04f, 0.10f, 0.66f, 0, -0.01f,
                 0,     0,     0,     1, 0
-            };
-            return SKColorFilter.CreateColorMatrix(sepiaMatrix);
+            });
         }
 
         if (code == "korean_soft" || code.Contains("korean") || code.Contains("soft") || code.Contains("trong_treo"))
         {
-            // Korean Glow / Soft pastel brightening
-            float[] softMatrix = new float[]
+            // Korean Soft Glow: Nâng sáng nhẹ dịu, tôn da hồng hào, mịn màng
+            return SKColorFilter.CreateColorMatrix(new float[]
             {
-                1.04f, 0.02f, 0.02f, 0, 10f,
-                0.02f, 1.04f, 0.02f, 0, 10f,
-                0.02f, 0.02f, 1.06f, 0, 14f,
+                1.02f, 0.01f, 0.01f, 0, 0.02f,
+                0.01f, 1.02f, 0.01f, 0, 0.02f,
+                0.01f, 0.01f, 1.05f, 0, 0.03f,
                 0,     0,     0,     1, 0
-            };
-            return SKColorFilter.CreateColorMatrix(softMatrix);
+            });
         }
 
         return null;

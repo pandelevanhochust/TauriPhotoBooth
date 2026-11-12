@@ -218,7 +218,7 @@ export const App: React.FC = () => {
         <FavoriPhotoSelectScreen
           photos={capturedPhotos}
           frameObj={selectedFrameObj}
-          layoutType={selectedSize}
+          layoutType={selectedFrameObj?.layoutId || selectedSize}
           filterCss={selectedFilterObj?.cssFilter}
           onConfirmSelection={(slotted) => {
             setCapturedPhotos(slotted);
@@ -233,7 +233,7 @@ export const App: React.FC = () => {
       {/* NOTE: Step 11/11 (QR download 12.png) is skipped -> finishes and resets to Welcome */}
       {step === 'print' && (
         <FavoriPrintScreen
-          layoutType={selectedSize}
+          layoutType={selectedFrameObj?.layoutId || selectedSize}
           frameTheme={selectedFrame}
           frameObj={selectedFrameObj}
           filterId={selectedFilter}

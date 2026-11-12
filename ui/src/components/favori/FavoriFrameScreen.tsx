@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { FavoriLayout } from './FavoriLayout';
-import { Loader2, Image as ImageIcon, Sparkles } from 'lucide-react';
+import { Loader2, Image as ImageIcon } from 'lucide-react';
 import { backendApi, type FrameOption } from '../../services/backendApi';
 
 export type { FrameOption };
@@ -142,99 +142,58 @@ export const FavoriFrameScreen: React.FC<FavoriFrameScreenProps> = ({
             </button>
           </div>
         ) : (
-          <div className="flex flex-wrap items-stretch justify-center gap-6 w-full py-2">
+          <div className="flex flex-wrap items-center justify-center gap-6 md:gap-10 w-full py-6">
             {displayedFrames.map((frame) => {
               const isSelected = selectedFrame === frame.id;
+              const isStrip = frame.layoutId === '1x4';
+
               return (
-                <div
+                <button
                   key={frame.id}
+                  type="button"
                   onClick={() => onSelectFrame(frame.id, frame)}
-                  className={`favori-card flex flex-col items-center p-3 cursor-pointer w-48 md:w-56 transition-all duration-200 relative ${
+                  title={frame.name}
+                  className={`group relative flex items-center justify-center p-0 border-0 bg-transparent cursor-pointer transition-all duration-300 outline-none focus:outline-none ${
+                    isStrip
+                      ? 'w-28 md:w-36 h-80 md:h-96'
+                      : 'w-52 md:w-64 h-78 md:h-96'
+                  } ${
                     isSelected
-                      ? 'ring-4 ring-[#7a0000] scale-105 shadow-2xl bg-white'
-                      : 'hover:scale-102 hover:border-[#7a0000]/50 bg-white/80'
+                      ? 'scale-105 z-10'
+                      : 'hover:scale-103 opacity-90 hover:opacity-100'
                   }`}
                 >
-                  {/* Category badge */}
-                  {frame.categoryName && (
-                    <div className="absolute top-2 left-2 z-10 bg-[#7a0000]/90 text-white text-[10px] px-2 py-0.5 rounded-md font-medium tracking-wide shadow-sm flex items-center space-x-1">
-                      <Sparkles className="w-2.5 h-2.5" />
-                      <span>{frame.categoryName}</span>
-                    </div>
-                  )}
-
-                  {/* Frame Thumbnail / Preview Image */}
+                  {/* Khung ảnh thuần túy */}
                   <div
-                    className="w-full h-56 rounded-xl flex items-center justify-center p-2 border border-neutral-300 shadow-inner mb-2 overflow-hidden relative bg-neutral-100"
-                    style={{
-                      backgroundColor: frame.bgColor || '#ffffff',
-                    }}
+                    className={`w-full h-full rounded-2xl overflow-hidden transition-all duration-300 flex items-center justify-center ${
+                      isSelected
+                        ? 'ring-4 ring-[#7a0000] ring-offset-4 ring-offset-[#fcfbf8] drop-shadow-[0_16px_32px_rgba(122,0,0,0.35)]'
+                        : 'drop-shadow-md group-hover:drop-shadow-2xl'
+                    }`}
                   >
-                    {frame.thumbnailUrl ? (
+                    {frame.thumbnailUrl || frame.frameUrl ? (
                       <img
-                        src={frame.thumbnailUrl}
+                        src={frame.thumbnailUrl || frame.frameUrl}
                         alt={frame.name}
-                        className="w-full h-full object-contain pointer-events-none select-none transition-transform duration-200"
+                        className="w-full h-full object-contain pointer-events-none select-none transition-transform duration-300 group-hover:scale-[1.01]"
                         loading="lazy"
                         onError={(e) => {
-                          // Nếu thumbnail lỗi, fallback sang frameUrl
                           if (frame.frameUrl && (e.currentTarget as HTMLImageElement).src !== frame.frameUrl) {
                             (e.currentTarget as HTMLImageElement).src = frame.frameUrl;
                           }
                         }}
                       />
-                    ) : frame.frameUrl ? (
-                      <img
-                        src={frame.frameUrl}
-                        alt={frame.name}
-                        className="w-full h-full object-contain pointer-events-none select-none"
-                        loading="lazy"
-                      />
                     ) : (
-                      /* Mockup apertures if no image */
-                      <div className="w-full h-full flex flex-col items-center justify-around py-2">
-                        {frame.holes && frame.holes.length > 0 ? (
-                          frame.holes.slice(0, 4).map((_, idx) => (
-                            <div
-                              key={idx}
-                              className="w-4/5 h-8 bg-neutral-200/90 rounded-sm border border-neutral-300"
-                            />
-                          ))
-                        ) : (
-                          <>
-                            <div className="w-4/5 h-9 bg-neutral-200/90 rounded-sm border border-neutral-300" />
-                            <div className="w-4/5 h-9 bg-neutral-200/90 rounded-sm border border-neutral-300" />
-                            <div className="w-4/5 h-9 bg-neutral-200/90 rounded-sm border border-neutral-300" />
-                          </>
-                        )}
-                        <span className="text-[10px] font-serif italic text-neutral-500">
-                          Favori
+                      /* Fallback nếu chưa tải được ảnh */
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-white/70 border border-neutral-200 rounded-2xl p-4">
+                        <ImageIcon className="w-8 h-8 text-neutral-400 mb-2" />
+                        <span className="text-xs text-neutral-500 font-medium text-center">
+                          {frame.name}
                         </span>
                       </div>
                     )}
-
-                    {/* Layout badge */}
-                    <div className="absolute top-2 right-2 bg-black/70 text-white text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-sm font-semibold">
-                      {frame.layoutId}
-                    </div>
                   </div>
-
-                  {/* Title */}
-                  <span className="font-lobster text-lg text-[#1f1610] text-center leading-snug line-clamp-2 min-h-[46px] flex items-center justify-center px-1">
-                    {frame.name}
-                  </span>
-
-                  {/* Radio indicator */}
-                  <div className="mt-2 flex items-center justify-center">
-                    <div
-                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
-                        isSelected ? 'border-[#7a0000] bg-[#7a0000]' : 'border-[#c5a880]'
-                      }`}
-                    >
-                      {isSelected && <div className="w-2 h-2 rounded-full bg-white" />}
-                    </div>
-                  </div>
-                </div>
+                </button>
               );
             })}
           </div>
