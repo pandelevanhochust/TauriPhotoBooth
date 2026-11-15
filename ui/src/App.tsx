@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { FavoriWelcomeScreen } from './components/favori/FavoriWelcomeScreen';
 import { FavoriSizeScreen } from './components/favori/FavoriSizeScreen';
-import type { PhotoSizeType } from './components/favori/FavoriSizeScreen';
 import { FavoriFrameScreen } from './components/favori/FavoriFrameScreen';
 import { FavoriQuantityScreen } from './components/favori/FavoriQuantityScreen';
 import { FavoriModeScreen } from './components/favori/FavoriModeScreen';
@@ -13,7 +12,10 @@ import { FavoriPhotoSelectScreen } from './components/favori/FavoriPhotoSelectSc
 import { FavoriPrintScreen } from './components/favori/FavoriPrintScreen';
 import { AdminModal } from './components/AdminModal';
 import { ipc } from './services/ipc';
-import type { FrameOption, FilterOption } from './services/backendApi';
+import { priceForQuantity } from './services/backendApi';
+import type { FrameOption, FilterOption, LayoutOption } from './services/backendApi';
+import { getKioskSettings, type KioskSettings } from './services/kioskSettings';
+import type { PhotoTransform } from './services/photoTransform';
 
 export type FavoriStep =
   | 'welcome'     // 1.png
@@ -36,16 +38,21 @@ export const App: React.FC = () => {
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
 
   // Session Options State
-  const [selectedSize, setSelectedSize] = useState<PhotoSizeType>('strip2x6');
-  const [selectedFrame, setSelectedFrame] = useState<string>('classic-cream');
+  const [settings, setSettings] = useState<KioskSettings>(() => getKioskSettings());
+  const [selectedLayout, setSelectedLayout] = useState<LayoutOption | undefined>(undefined);
+  const [selectedFrame, setSelectedFrame] = useState<string>('');
   const [selectedFrameObj, setSelectedFrameObj] = useState<FrameOption | undefined>(undefined);
   const [quantity, setQuantity] = useState<number>(2);
   const [captureMode, setCaptureMode] = useState<CaptureMode>('autoCountdown');
   const [selectedFilter, setSelectedFilter] = useState<string>('original');
   const [selectedFilterObj, setSelectedFilterObj] = useState<FilterOption | undefined>(undefined);
-  const [beautifyEnabled, setBeautifyEnabled] = useState<boolean>(true);
+  // capturedPhotos: toàn bộ ảnh gốc của phiên; slottedPhotos: ảnh đã xếp theo thứ tự ô để in
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
-  const [retakeTargetIndex, setRetakeTargetIndex] = useState<number | null>(null);
+  const [slottedPhotos, setSlottedPhotos] = useState<string[]>([]);
+  // Đường dẫn ảnh gốc trên máy (ảnh DSLR độ phân giải đầy đủ), cùng thứ tự với capturedPhotos / slottedPhotos
+  const [capturedPaths, setCapturedPaths] = useState<string[]>([]);
+  const [slottedPaths, setSlottedPaths] = useState<string[]>([]);
+  const [slotTransforms, setSlotTransforms] = useState<PhotoTransform[]>([]);
 
   // Fetch initial kiosk status from backend
   useEffect(() => {
@@ -84,22 +91,40 @@ export const App: React.FC = () => {
 
   const handleStartSession = () => {
     ipc.invoke('start_capture_session').catch((e) => console.warn(e));
+    setSettings(getKioskSettings());
     setCapturedPhotos([]);
-    setRetakeTargetIndex(null);
+    setSlottedPhotos([]);
+    setCapturedPaths([]);
+    setSlottedPaths([]);
+    setSlotTransforms([]);
     setStep('size');
-  };
-
-  const handleRetakeShot = (retakeIndex: number) => {
-    setRetakeTargetIndex(retakeIndex);
-    setStep('liveview');
   };
 
   const handleFinishSession = () => {
     setCapturedPhotos([]);
-    setRetakeTargetIndex(null);
+    setSlottedPhotos([]);
+    setCapturedPaths([]);
+    setSlottedPaths([]);
+    setSlotTransforms([]);
     setQuantity(2);
+    setSelectedLayout(undefined);
+    setSelectedFrame('');
+    setSelectedFrameObj(undefined);
+    setSelectedFilter('original');
+    setSelectedFilterObj(undefined);
     setStep('welcome');
   };
+
+  const handleSelectLayout = (layout: LayoutOption) => {
+    if (layout.id !== selectedLayout?.id) {
+      // Frame phụ thuộc layout: đổi layout thì bỏ frame đang chọn
+      setSelectedFrame('');
+      setSelectedFrameObj(undefined);
+    }
+    setSelectedLayout(layout);
+  };
+
+  const isFreeMode = kioskMode === 'FreeEvent';
 
   return (
     <div className="w-screen h-screen overflow-hidden bg-[#f5f0ea] select-none">
@@ -117,8 +142,9 @@ export const App: React.FC = () => {
       {/* Step 1/11: Chọn kích cỡ ảnh (2.png) */}
       {step === 'size' && (
         <FavoriSizeScreen
-          selectedSize={selectedSize}
-          onSelectSize={setSelectedSize}
+          selectedLayoutId={selectedLayout?.id}
+          onSelectLayout={handleSelectLayout}
+          showPrice={!isFreeMode}
           onNext={() => setStep('frame')}
           onBack={() => setStep('welcome')}
         />
@@ -127,16 +153,11 @@ export const App: React.FC = () => {
       {/* Step 2/11: Chọn khung ảnh (3.png) */}
       {step === 'frame' && (
         <FavoriFrameScreen
-          selectedSize={selectedSize}
+          layout={selectedLayout}
           selectedFrame={selectedFrame}
           onSelectFrame={(id, frameObj) => {
             setSelectedFrame(id);
-            if (frameObj) {
-              setSelectedFrameObj(frameObj);
-              if (frameObj.layoutId === '1x4') setSelectedSize('strip2x6');
-              else if (frameObj.layoutId === '2x2') setSelectedSize('postcard4x6');
-              else if (frameObj.layoutId === '2x3') setSelectedSize('special4x6');
-            }
+            setSelectedFrameObj(frameObj);
           }}
           onNext={() => setStep('quantity')}
           onBack={() => setStep('size')}
@@ -149,8 +170,8 @@ export const App: React.FC = () => {
         <FavoriQuantityScreen
           quantity={quantity}
           onQuantityChange={setQuantity}
-          pricePerUnit={50000}
-          isFreeMode={kioskMode === 'FreeEvent'}
+          totalPrice={selectedLayout ? priceForQuantity(selectedLayout, quantity) : undefined}
+          isFreeMode={isFreeMode}
           onNext={() => setStep('mode')}
           onBack={() => setStep('frame')}
         />
@@ -160,6 +181,8 @@ export const App: React.FC = () => {
       {step === 'mode' && (
         <FavoriModeScreen
           selectedMode={captureMode}
+          remoteTimeoutSec={settings.remoteCaptureTimeoutSec}
+          countdownSec={settings.autoCountdownSec}
           onSelectMode={(m) => {
             setCaptureMode(m);
             setStep('countdown');
@@ -179,19 +202,15 @@ export const App: React.FC = () => {
       {/* Step 7/11: Chụp ảnh & Live View (8.png) */}
       {step === 'liveview' && (
         <FavoriLiveViewScreen
-          totalShots={retakeTargetIndex !== null ? 1 : 6}
+          totalShots={settings.totalShots}
           mode={captureMode}
-          onAllShotsCaptured={(newPhotos) => {
-            if (retakeTargetIndex !== null && newPhotos.length > 0) {
-              const updated = [...capturedPhotos];
-              updated[retakeTargetIndex] = newPhotos[0];
-              setCapturedPhotos(updated);
-              setRetakeTargetIndex(null);
-              setStep('photoSelect');
-            } else {
-              setCapturedPhotos(newPhotos);
-              setStep('filter');
-            }
+          countdownSec={settings.autoCountdownSec}
+          remoteTimeoutSec={settings.remoteCaptureTimeoutSec}
+          timelapseEnabled={settings.timelapseEnabled}
+          onAllShotsCaptured={(newPhotos, paths) => {
+            setCapturedPhotos(newPhotos);
+            setCapturedPaths(paths);
+            setStep('filter');
           }}
           onCancel={() => setStep('welcome')}
         />
@@ -206,10 +225,8 @@ export const App: React.FC = () => {
             setSelectedFilter(id);
             if (filterObj) setSelectedFilterObj(filterObj);
           }}
-          beautifyEnabled={beautifyEnabled}
-          onToggleBeautify={setBeautifyEnabled}
+          timeoutSec={settings.filterTimeoutSec}
           onNext={() => setStep('photoSelect')}
-          onBack={() => setStep('mode')}
         />
       )}
 
@@ -218,14 +235,15 @@ export const App: React.FC = () => {
         <FavoriPhotoSelectScreen
           photos={capturedPhotos}
           frameObj={selectedFrameObj}
-          layoutType={selectedFrameObj?.layoutId || selectedSize}
+          layout={selectedLayout}
           filterCss={selectedFilterObj?.cssFilter}
-          onConfirmSelection={(slotted) => {
-            setCapturedPhotos(slotted);
+          timeoutSec={settings.selectTimeoutSec}
+          onConfirm={(slotted, transforms) => {
+            setSlottedPhotos(slotted);
+            setSlottedPaths(slotted.map((p) => capturedPaths[capturedPhotos.indexOf(p)] || ''));
+            setSlotTransforms(transforms);
+            setStep('print');
           }}
-          onRetake={handleRetakeShot}
-          onNext={() => setStep('print')}
-          onBack={() => setStep('filter')}
         />
       )}
 
@@ -233,14 +251,16 @@ export const App: React.FC = () => {
       {/* NOTE: Step 11/11 (QR download 12.png) is skipped -> finishes and resets to Welcome */}
       {step === 'print' && (
         <FavoriPrintScreen
-          layoutType={selectedFrameObj?.layoutId || selectedSize}
+          layoutType={selectedFrameObj?.layoutId || selectedLayout?.id || '2x2'}
           frameTheme={selectedFrame}
           frameObj={selectedFrameObj}
           filterId={selectedFilter}
           filterObj={selectedFilterObj}
-          beautifyEnabled={beautifyEnabled}
+          beautifyEnabled={false}
           copies={quantity}
-          photos={capturedPhotos}
+          photos={slottedPhotos}
+          photoPaths={slottedPaths}
+          transforms={slotTransforms}
           onFinish={handleFinishSession}
         />
       )}

@@ -18,6 +18,16 @@
     <ProjectReference Include="..\PhotoBooth.Imaging\PhotoBooth.Imaging.csproj" />
   </ItemGroup>
 
+  <!-- Canon EDSDK (64-bit) phải nằm cạnh file chạy; xem backend/lib/EDSDK/README.md -->
+  <ItemGroup Condition="Exists('..\..\lib\EDSDK\EDSDK.dll')">
+    <None Include="..\..\lib\EDSDK\*.dll" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- FUJIFILM X SDK runtime (XAPI.dll, FF*.dll, XSDK.DAT...); xem backend/lib/FujiXSDK/README.md -->
+  <ItemGroup Condition="Exists('..\..\lib\FujiXSDK\XAPI.dll')">
+    <None Include="..\..\lib\FujiXSDK\*.dll;..\..\lib\FujiXSDK\*.DAT" CopyToOutputDirectory="PreserveNewest" Link="%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <Target Name="CopyDistUi" AfterTargets="Build" Condition="Exists('..\..\..\ui\dist\index.html')">
     <ItemGroup>
       <DistFiles Include="..\..\..\ui\dist\**\*.*" />

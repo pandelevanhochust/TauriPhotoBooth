@@ -5,6 +5,10 @@ export type CaptureMode = 'remote' | 'autoCountdown';
 
 interface FavoriModeScreenProps {
   selectedMode: CaptureMode;
+  /** Tổng thời gian của chế độ nút bấm (giây). */
+  remoteTimeoutSec?: number;
+  /** Số giây đếm ngược mỗi tấm ở chế độ tự động. */
+  countdownSec?: number;
   onSelectMode: (mode: CaptureMode) => void;
   onNext: () => void;
   onBack: () => void;
@@ -12,6 +16,8 @@ interface FavoriModeScreenProps {
 
 export const FavoriModeScreen: React.FC<FavoriModeScreenProps> = ({
   selectedMode,
+  remoteTimeoutSec = 180,
+  countdownSec = 10,
   onSelectMode,
   onNext,
   onBack,
@@ -48,7 +54,7 @@ export const FavoriModeScreen: React.FC<FavoriModeScreenProps> = ({
               Chụp bằng nút bấm
             </h3>
             <p className="text-base text-[#5c4d43] mt-1 font-medium">
-              trong 5 phút
+              trong {Math.max(1, Math.round(remoteTimeoutSec / 60))} phút
             </p>
           </div>
         </div>
@@ -74,7 +80,7 @@ export const FavoriModeScreen: React.FC<FavoriModeScreenProps> = ({
           </div>
           <div className="flex-1 text-left">
             <h3 className="text-2xl md:text-3xl font-lobster text-[#1f1610] leading-snug">
-              10 giây đếm ngược
+              {countdownSec} giây đếm ngược
             </h3>
             <p className="text-base text-[#5c4d43] mt-1 font-medium">
               tự động
@@ -82,6 +88,10 @@ export const FavoriModeScreen: React.FC<FavoriModeScreenProps> = ({
           </div>
         </div>
       </div>
+
+      <p className="text-sm text-[#6b5b52] text-center">
+        Ảnh được lưu 24 giờ để bạn tải về, sau đó tự động xoá.
+      </p>
     </FavoriLayout>
   );
 };

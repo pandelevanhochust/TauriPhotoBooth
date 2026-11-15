@@ -14,6 +14,10 @@ interface FavoriLayoutProps {
   disableNext?: boolean;
   centerHeaderStep?: boolean;
   headerStepPosition?: 'center' | 'underLogo';
+  /** Số giây còn lại của bước; có giá trị thì hiện "Thời gian còn lại" ở góc trên trái. */
+  timeLeft?: number;
+  /** Cho phần nội dung dùng gần hết bề ngang màn hình. */
+  wide?: boolean;
 }
 
 export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
@@ -29,6 +33,8 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
   backLabel = 'Quay về',
   disableNext = false,
   headerStepPosition = 'center',
+  timeLeft,
+  wide = false,
 }) => {
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#f5f0ea] flex flex-col justify-between p-8 select-none">
@@ -38,13 +44,19 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
         style={{ backgroundImage: `url('/favori/Background.png')` }}
       />
 
+      {typeof timeLeft === 'number' && (
+        <div className="absolute top-3 left-6 z-20 text-[#1f1610] text-base font-semibold tabular-nums">
+          Thời gian còn lại: {timeLeft}s
+        </div>
+      )}
+
       {/* Top Header Row */}
       {!hideHeader && (
-        <header className="relative z-10 w-full flex items-center justify-between pt-2 px-6">
+        <header className="relative z-10 w-full grid grid-cols-[1fr_auto_1fr] items-start pt-2 px-6">
           {/* Logo Top Left (with hidden multi-tap admin zone) */}
-          <div 
+          <div
             onClick={onAdminTap}
-            className="flex flex-col items-start cursor-pointer active:opacity-80 transition-opacity"
+            className="flex flex-col items-start justify-self-start cursor-pointer active:opacity-80 transition-opacity"
           >
             <img 
               src="/favori/logo.png" 
@@ -59,8 +71,8 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
           </div>
 
           {/* Center Step Header (Standard Favori Title Layout) */}
-          {headerStepPosition === 'center' && (stepNumber || stepTitle) && (
-            <div className="flex flex-col items-center justify-center text-center">
+          {headerStepPosition === 'center' && (stepNumber || stepTitle) ? (
+            <div className="flex flex-col items-center justify-center text-center pt-6">
               {stepNumber && (
                 <span className="text-[#7a0000] text-lg font-medium tracking-wide mb-1">
                   Bước {stepNumber}/11
@@ -77,15 +89,21 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
                 </p>
               )}
             </div>
+          ) : (
+            <div />
           )}
 
-          {/* Top Right Balancing Placeholder */}
-          <div className="w-28 text-right" />
+          {/* "Photobooth by Favori" đã có sẵn trong Background.png */}
+          <div />
         </header>
       )}
 
       {/* Main Content Body */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center w-full max-w-6xl mx-auto px-4 py-2">
+      <main
+        className={`relative z-10 flex-1 min-h-0 flex flex-col items-center justify-center w-full mx-auto px-4 py-2 ${
+          wide ? 'max-w-[1700px]' : 'max-w-6xl'
+        }`}
+      >
         {children}
       </main>
 

@@ -5,7 +5,9 @@ import { Delete } from 'lucide-react';
 interface FavoriQuantityScreenProps {
   quantity: number;
   onQuantityChange: (qty: number) => void;
-  pricePerUnit: number;
+  pricePerUnit?: number;
+  /** Tổng tiền đã tính theo bảng giá của layout; có thì dùng thay cho quantity * pricePerUnit. */
+  totalPrice?: number;
   isFreeMode?: boolean;
   onNext: () => void;
   onBack: () => void;
@@ -15,6 +17,7 @@ export const FavoriQuantityScreen: React.FC<FavoriQuantityScreenProps> = ({
   quantity,
   onQuantityChange,
   pricePerUnit = 50000,
+  totalPrice,
   isFreeMode = true,
   onNext,
   onBack,
@@ -50,7 +53,7 @@ export const FavoriQuantityScreen: React.FC<FavoriQuantityScreenProps> = ({
 
   const calculateTotal = () => {
     if (isFreeMode) return 'MIỄN PHÍ (SỰ KIỆN)';
-    let total = quantity * pricePerUnit;
+    let total = totalPrice ?? quantity * pricePerUnit;
     if (discountApplied) total = Math.max(0, total - 20000);
     return `${total.toLocaleString('vi-VN')} đ`;
   };

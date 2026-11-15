@@ -1,49 +1,236 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { FlipHorizontal, Camera } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Camera } from 'lucide-react';
 import { ipc } from '../../services/ipc';
+import { cameraApi } from '../../services/camera';
+import { useCountdown } from '../../hooks/useCountdown';
+
+// Tỉ lệ khung ngắm: webcam 16:9, máy ảnh Canon (cảm biến APS-C) 3:2
+const WEBCAM_ASPECT = 16 / 9;
+const DSLR_ASPECT = 3 / 2;
+
+type CameraSource = 'detecting' | 'dslr' | 'webcam';
+
+// Video bước chụp: khung webcam gửi cho host mỗi 83ms = 12 khung/giây (máy ảnh SDK thì host tự lấy khung live view)
+/** Video đầy đủ 15 khung/giây (host đặt khung theo thời điểm thật). */
+const TIMELAPSE_SAMPLE_MS = 66;
+const TIMELAPSE_FRAME_WIDTH = 1280;
+
+// Rời bước chụp: chờ tối đa bấy lâu cho các ảnh còn đang tải từ máy ảnh về
+const PENDING_SHOTS_TIMEOUT_MS = 12000;
 
 interface FavoriLiveViewScreenProps {
   totalShots?: number;
   mode?: 'remote' | 'autoCountdown';
-  onAllShotsCaptured: (photos: string[]) => void;
+  /** Số giây đếm ngược trước mỗi tấm ở chế độ tự động. */
+  countdownSec?: number;
+  /** Tổng thời gian cho chế độ nút bấm (giây). */
+  remoteTimeoutSec?: number;
+  /** Ghi video timelapse trong lúc chụp. */
+  timelapseEnabled?: boolean;
+  /** photos: ảnh để hiển thị (data URL); filePaths: ảnh gốc trên máy (cùng thứ tự, có thể rỗng). */
+  onAllShotsCaptured: (photos: string[], filePaths: string[]) => void;
   onCancel: () => void;
 }
 
+function playShutterSound() {
+  try {
+    const AudioCtor =
+      window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const audioCtx = new AudioCtor();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.1);
+    setTimeout(() => {
+      audioCtx.close().catch(() => {});
+    }, 200);
+  } catch {
+    // Audio context might be restricted
+  }
+}
+
+function placeholderShot(shotIndex: number): string {
+  const c = document.createElement('canvas');
+  c.width = 1200;
+  c.height = 800;
+  const ctx = c.getContext('2d');
+  if (!ctx) return '';
+  ctx.fillStyle = shotIndex % 2 === 0 ? '#f5ece2' : '#e8dcce';
+  ctx.fillRect(0, 0, 1200, 800);
+  ctx.fillStyle = '#7a0000';
+  ctx.font = 'bold 44px serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(`Favori Photo Shot #${shotIndex}`, 600, 400);
+  return c.toDataURL('image/jpeg', 0.9);
+}
+
 export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
-  totalShots = 4,
+  totalShots = 10,
   mode = 'autoCountdown',
+  countdownSec = 10,
+  remoteTimeoutSec = 180,
+  timelapseEnabled = false,
   onAllShotsCaptured,
 }) => {
-  const [currentShot, setCurrentShot] = useState<number>(1);
-  const [countdown, setCountdown] = useState<number | null>(mode === 'autoCountdown' ? 3 : null);
-  const [isMirrored, setIsMirrored] = useState<boolean>(true);
-  const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
+  const isRemote = mode === 'remote';
+
+  const [shotsTaken, setShotsTaken] = useState<number>(0);
+  const [countdown, setCountdown] = useState<number | null>(isRemote ? null : countdownSec);
+  const [isCapturing, setIsCapturing] = useState<boolean>(false);
+  const [isFinished, setIsFinished] = useState<boolean>(false);
   const [isFlashing, setIsFlashing] = useState<boolean>(false);
   const [cameraReady, setCameraReady] = useState<boolean>(false);
-  const [liveFrameBase64, setLiveFrameBase64] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [source, setSource] = useState<CameraSource>('detecting');
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
 
-  // Listen to live camera frames from C# host (DSLR / Canon / MockCamera)
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const liveImgRef = useRef<HTMLImageElement | null>(null);
+  const photosRef = useRef<string[]>([]);
+  const pathsRef = useRef<string[]>([]);
+  // Mã tấm chụp (tăng dần, không dùng lại) song song với photosRef / pathsRef
+  const seqsRef = useRef<number[]>([]);
+  const nextSeqRef = useRef<number>(1);
+  // Các tấm đã nhả màn trập nhưng ảnh còn đang tải từ máy ảnh về
+  const pendingRef = useRef<Set<number>>(new Set());
+  const pendingWaitersRef = useRef<Array<() => void>>([]);
+  const sourceRef = useRef<CameraSource>('detecting');
+  sourceRef.current = source;
+  const liveFrameRef = useRef<string | null>(null);
+  const inFlightRef = useRef<Promise<string[]> | null>(null);
+  const finishedRef = useRef<boolean>(false);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Có máy ảnh Canon thì dùng máy ảnh, không thì webcam; đổi theo khi cắm / rút máy giữa chừng
   useEffect(() => {
-    const unlisten = ipc.listen<{ base64: string }>('camera_frame', (data: { base64: string }) => {
-      if (data && data.base64) {
-        setLiveFrameBase64(`data:image/jpeg;base64,${data.base64}`);
-        setCameraReady(true);
-      }
+    let active = true;
+    cameraApi.getStatus().then((s) => {
+      if (active) setSource(s.connected ? 'dslr' : 'webcam');
+    });
+    const unlisten = cameraApi.onStatusChanged((s) => {
+      setSource((cur) => (cur === 'detecting' ? cur : s.connected ? 'dslr' : 'webcam'));
     });
     return () => {
+      active = false;
       unlisten();
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
     };
   }, []);
 
-  // Setup WebCam or MediaStream
+  // Báo host khách đang ở bước chụp: hàng đợi gửi ảnh lên server tạm dừng để không giật live view
   useEffect(() => {
+    ipc.invoke('capture_step', { active: true }).catch(() => undefined);
+    return () => {
+      ipc.invoke('capture_step', { active: false }).catch(() => undefined);
+    };
+  }, []);
+
+  // Ghi timelapse suốt bước chụp; rời màn hình thì host dừng và mã hoá MP4 ở chế độ nền
+  useEffect(() => {
+    if (!timelapseEnabled) return;
+    ipc.invoke('timelapse_start').catch(() => undefined);
+    return () => {
+      ipc.invoke('timelapse_stop').catch(() => undefined);
+    };
+  }, [timelapseEnabled]);
+
+  // Webcam: tự lấy khung gửi cho host (máy ảnh SDK thì host lấy thẳng từ live view)
+  useEffect(() => {
+    if (!timelapseEnabled || source !== 'webcam') return;
+    const canvas = document.createElement('canvas');
+    const timer = setInterval(() => {
+      const video = videoRef.current;
+      if (!video || video.videoWidth === 0 || finishedRef.current) return;
+      const scale = Math.min(1, TIMELAPSE_FRAME_WIDTH / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ipc.invoke('timelapse_frame', { base64: canvas.toDataURL('image/jpeg', 0.7) }).catch(() => undefined);
+    }, TIMELAPSE_SAMPLE_MS);
+    return () => clearInterval(timer);
+  }, [timelapseEnabled, source]);
+
+  // Live view từ máy ảnh (host gửi khung JPEG)
+  useEffect(() => {
+    if (source !== 'dslr') return;
+    setCameraReady(false);
+    let gotFrame = false;
+    const unlisten = ipc.listen<{ base64: string }>('camera_frame', (data: { base64: string }) => {
+      if (data && data.base64) {
+        const frame = `data:image/jpeg;base64,${data.base64}`;
+        liveFrameRef.current = frame;
+        // Gán thẳng vào thẻ ảnh: ~30 khung/giây mà không vẽ lại cả màn hình
+        if (liveImgRef.current) liveImgRef.current.src = frame;
+        if (!gotFrame) {
+          gotFrame = true;
+          setCameraReady(true);
+        }
+      }
+    });
+    cameraApi.startLiveView();
+    return () => {
+      unlisten();
+      cameraApi.stopLiveView();
+      liveFrameRef.current = null;
+    };
+  }, [source]);
+
+  const settlePending = (seq: number) => {
+    pendingRef.current.delete(seq);
+    if (pendingRef.current.size === 0) {
+      const waiters = pendingWaitersRef.current;
+      pendingWaitersRef.current = [];
+      waiters.forEach((resolve) => resolve());
+    }
+  };
+
+  // Ảnh của máy ảnh tải về ở chế độ nền: thay ảnh tạm bằng ảnh thật, hoặc bỏ tấm lỗi
+  useEffect(() => {
+    const offReady = cameraApi.onShotReady((shot) => {
+      const idx = seqsRef.current.indexOf(shot.shotIndex);
+      if (idx >= 0) {
+        const photos = [...photosRef.current];
+        const paths = [...pathsRef.current];
+        photos[idx] = shot.base64.startsWith('data:') ? shot.base64 : `data:image/jpeg;base64,${shot.base64}`;
+        paths[idx] = shot.filePath || '';
+        photosRef.current = photos;
+        pathsRef.current = paths;
+      }
+      settlePending(shot.shotIndex);
+    });
+    const offFailed = cameraApi.onShotFailed((shot) => {
+      const idx = seqsRef.current.indexOf(shot.shotIndex);
+      if (idx >= 0 && !finishedRef.current) {
+        // Chưa rời bước chụp: bỏ tấm lỗi để khách chụp bù
+        photosRef.current = photosRef.current.filter((_, i) => i !== idx);
+        pathsRef.current = pathsRef.current.filter((_, i) => i !== idx);
+        seqsRef.current = seqsRef.current.filter((_, i) => i !== idx);
+        setShotsTaken(photosRef.current.length);
+        showCaptureError(`Tấm vừa chụp bị lỗi: ${shot.message}`);
+      }
+      settlePending(shot.shotIndex);
+    });
+    return () => {
+      offReady();
+      offFailed();
+    };
+  }, []);
+
+  // Webcam của máy tính (khi không có máy ảnh Canon)
+  useEffect(() => {
+    if (source !== 'webcam') return;
     let stream: MediaStream | null = null;
     let isCancelled = false;
 
     async function initWebcam() {
       try {
-        console.log('[FavoriLiveViewScreen] Requesting webcam media stream...');
         let s: MediaStream;
         try {
           s = await navigator.mediaDevices.getUserMedia({
@@ -73,7 +260,6 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
             console.warn('[FavoriLiveViewScreen] Video play auto-play warning:', playErr);
           }
           setCameraReady(true);
-          console.log('[FavoriLiveViewScreen] Webcam connected and streaming successfully!');
         }
       } catch (err) {
         console.error('[FavoriLiveViewScreen] Webcam stream not accessible:', err);
@@ -89,229 +275,255 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
         stream.getTracks().forEach((track) => track.stop());
       }
     };
-  }, []);
+  }, [source]);
 
-  // Shutter Flash sound & animation trigger
-  const triggerCapture = async () => {
-    setIsFlashing(true);
-    setTimeout(() => setIsFlashing(false), 250);
+  const finish = useCallback(async () => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    setIsFinished(true);
+    setCountdown(null);
 
-    // Audio click sound using Web Audio API
-    try {
-      const audioCtx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-      gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 0.1);
-      setTimeout(() => {
-        audioCtx.close().catch(() => {});
-      }, 200);
-    } catch {
-      // Audio context might be restricted
+    // Chờ các ảnh còn đang tải từ máy ảnh về (tấm nào quá hạn thì giữ ảnh tạm)
+    if (pendingRef.current.size > 0) {
+      setIsSaving(true);
+      await Promise.race([
+        new Promise<void>((resolve) => pendingWaitersRef.current.push(resolve)),
+        new Promise<void>((resolve) => setTimeout(resolve, PENDING_SHOTS_TIMEOUT_MS)),
+      ]);
     }
+    const photos = [...photosRef.current];
+    const paths = [...pathsRef.current];
+    setTimeout(() => onAllShotsCaptured(photos, paths), 300);
+  }, [onAllShotsCaptured]);
 
-    let photoData = '';
-    // Capture from video element if active
-    if (videoRef.current && videoRef.current.videoWidth > 0) {
-      const canvas = document.createElement('canvas');
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        if (isMirrored) {
-          ctx.translate(canvas.width, 0);
-          ctx.scale(-1, 1);
-        }
-        ctx.drawImage(videoRef.current, 0, 0);
-        photoData = canvas.toDataURL('image/jpeg', 0.95);
-      }
-    }
-
-    // Also call host IPC capture and pass real webcam photo
-    try {
-      const result = await ipc.invoke<{ filePath?: string; base64?: string }>('capture_shot', {
-        shotIndex: currentShot,
-        base64: photoData,
-      });
-      if (result && result.filePath && !photoData) {
-        photoData = result.filePath;
-      }
-    } catch (e) {
-      console.warn('Host capture call error (using browser capture):', e);
-    }
-
-    if (!photoData && liveFrameBase64) {
-      photoData = liveFrameBase64;
-    }
-
-    if (!photoData) {
-      // Offline fallback canvas data URL (không phụ thuộc internet bên ngoài)
-      const c = document.createElement('canvas');
-      c.width = 1200;
-      c.height = 800;
-      const ctx = c.getContext('2d');
-      if (ctx) {
-        ctx.fillStyle = currentShot % 2 === 0 ? '#f5ece2' : '#e8dcce';
-        ctx.fillRect(0, 0, 1200, 800);
-        ctx.fillStyle = '#7a0000';
-        ctx.font = 'bold 44px serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(`Favori Photo Shot #${currentShot}`, 600, 400);
-        photoData = c.toDataURL('image/jpeg', 0.9);
-      }
-    }
-
-    const updated = [...capturedPhotos, photoData];
-    setCapturedPhotos(updated);
-
-    if (currentShot < totalShots) {
-      setCurrentShot((s) => s + 1);
-      if (mode === 'autoCountdown') {
-        setCountdown(3);
-      } else {
-        setCountdown(null);
-      }
-    } else {
-      // All shots completed
-      setTimeout(() => {
-        onAllShotsCaptured(updated);
-      }, 500);
-    }
+  const showCaptureError = (message: string) => {
+    setCaptureError(message);
+    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    errorTimerRef.current = setTimeout(() => setCaptureError(null), 5000);
   };
 
-  // Countdown timer loop
+  /**
+   * Chụp một tấm, trả về toàn bộ danh sách ảnh sau khi thêm.
+   * Máy ảnh báo lỗi thì không thêm ảnh (trừ khi mustProduce: khi đó dùng tạm khung live view).
+   */
+  const captureOne = useCallback((mustProduce = false): Promise<string[]> => {
+    if (inFlightRef.current) return inFlightRef.current;
+
+    const run = async (): Promise<string[]> => {
+      const shotIndex = nextSeqRef.current++;
+      const fromDslr = sourceRef.current === 'dslr';
+      setIsCapturing(true);
+      setIsFlashing(true);
+      setTimeout(() => setIsFlashing(false), 250);
+      playShutterSound();
+
+      let photoData = '';
+      let filePath = '';
+      const video = videoRef.current;
+      if (!fromDslr && video && video.videoWidth > 0) {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          // Lật gương để ảnh in giống hình khách thấy trên màn hình
+          ctx.translate(canvas.width, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(video, 0, 0);
+          photoData = canvas.toDataURL('image/jpeg', 0.95);
+        }
+      }
+
+      let pending = false;
+      try {
+        const result = await cameraApi.captureShot(shotIndex, photoData);
+        if (result?.filePath && !result.filePath.startsWith('mock://')) filePath = result.filePath;
+        // Máy ảnh: màn trập đã nhả, ảnh thật tới sau qua shot_ready; tạm dùng khung live view
+        pending = !!result?.pending;
+        if ((fromDslr || !photoData) && result?.base64) {
+          photoData = result.base64.startsWith('data:') ? result.base64 : `data:image/jpeg;base64,${result.base64}`;
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.warn('[FavoriLiveViewScreen] capture_shot failed:', message);
+        if (fromDslr && !mustProduce) {
+          showCaptureError(`Chụp chưa được: ${message}`);
+          setIsCapturing(false);
+          return photosRef.current;
+        }
+      }
+
+      if (!photoData) photoData = liveFrameRef.current || placeholderShot(shotIndex);
+
+      if (pending) pendingRef.current.add(shotIndex);
+      photosRef.current = [...photosRef.current, photoData];
+      pathsRef.current = [...pathsRef.current, filePath];
+      seqsRef.current = [...seqsRef.current, shotIndex];
+      setShotsTaken(photosRef.current.length);
+      setIsCapturing(false);
+      return photosRef.current;
+    };
+
+    const promise = run().finally(() => {
+      inFlightRef.current = null;
+    });
+    inFlightRef.current = promise;
+    return promise;
+  }, []);
+
+  // Chế độ tự động: đếm ngược rồi chụp, lặp tới khi đủ số tấm
   useEffect(() => {
-    if (countdown === null) return;
+    if (isRemote || countdown === null) return;
     if (countdown > 0) {
-      const timer = setTimeout(() => {
-        setCountdown((c) => (c !== null ? c - 1 : null));
-      }, 1000);
+      // Giây cuối: máy ảnh lấy nét trước để hết giờ là chụp ngay
+      if (countdown === 1 && sourceRef.current === 'dslr') cameraApi.prefocus();
+      const timer = setTimeout(() => setCountdown((c) => (c !== null ? c - 1 : null)), 1000);
       return () => clearTimeout(timer);
-    } else if (countdown === 0) {
-      triggerCapture();
     }
-  }, [countdown]);
+    captureOne().then((photos) => {
+      if (photos.length >= totalShots) finish();
+      else if (!finishedRef.current) setCountdown(countdownSec);
+    });
+  }, [countdown, isRemote]);
+
+  // Chế độ nút bấm: mỗi lần bấm chụp ngay một tấm
+  const handleRemoteShot = async () => {
+    if (isCapturing || finishedRef.current) return;
+    const photos = await captureOne();
+    if (photos.length >= totalShots) finish();
+  };
+
+  // Chế độ nút bấm: hết giờ thì đi tiếp với ảnh đã có (chưa có tấm nào thì chụp một tấm)
+  const remoteTimeLeft = useCountdown(
+    remoteTimeoutSec,
+    async () => {
+      if (inFlightRef.current) await inFlightRef.current;
+      if (photosRef.current.length === 0) await captureOne(true);
+      finish();
+    },
+    { paused: !isRemote || isFinished },
+  );
+
+  const viewfinderAspect = source === 'dslr' ? DSLR_ASPECT : WEBCAM_ASPECT;
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#f5f0ea] flex flex-col justify-between p-6 select-none">
-      {/* Background with floral corners */}
-      <div 
+    <div className="relative w-screen h-screen overflow-hidden bg-[#f5f0ea] flex flex-col p-6 select-none">
+      <div
         className="absolute inset-0 pointer-events-none bg-cover bg-center z-0 opacity-90"
         style={{ backgroundImage: `url('/favori/Background.png')` }}
       />
 
-      {/* Screen Shutter Flash */}
       {isFlashing && (
         <div className="absolute inset-0 bg-white z-50 pointer-events-none animate-shutter-flash" />
       )}
 
-      {/* Top Header matching 8.png */}
-      <header className="relative z-10 w-full flex items-center justify-between px-6 pt-2">
-        {/* Top Left Logo with BƯỚC 7/11 directly below */}
-        <div className="flex flex-col items-start">
-          <img 
-            src="/favori/logo.png" 
-            alt="Favori" 
-            className="h-14 object-contain filter drop-shadow-sm" 
-          />
-          <span className="text-[#7a0000] text-sm font-bold tracking-wider uppercase mt-0.5">
+      <header className="relative z-10 w-full grid grid-cols-[1fr_auto_1fr] items-start px-6 pt-2">
+        <div className="flex flex-col items-center justify-self-start">
+          <img src="/favori/logo.png" alt="Favori" className="h-16 object-contain" />
+          <span className="text-[#7a0000] text-base font-medium tracking-wider uppercase mt-0.5">
             BƯỚC 7/11
           </span>
         </div>
 
-        {/* Top Center Title */}
-        <div className="text-center">
-          <h2 className="text-3xl md:text-4xl font-lobster text-[#1f1610]">
-            Nhìn vào khung hình nhé
-          </h2>
-        </div>
+        <h2 className="text-3xl md:text-4xl font-lobster text-[#1f1610] pt-2">
+          Nhìn vào khung hình nhé
+        </h2>
 
-        {/* Top Right Balancing Placeholder */}
-        <div className="w-28" />
+        {/* "Photobooth by Favori" đã có sẵn trong Background.png */}
+        <div />
       </header>
 
-      {/* Viewfinder Camera Feed Section - Expanded for large Kiosk display */}
-      <main className="relative z-10 flex-1 flex flex-col items-center justify-center my-auto w-full max-w-6xl mx-auto px-2 md:px-4">
-        <div className="relative w-full max-w-5xl h-[68vh] md:h-[72vh] max-h-[820px] bg-neutral-950 rounded-3xl overflow-hidden shadow-2xl border-4 border-[#bfa282]/90 flex items-center justify-center">
-          {/* Live Video Feed (Dual-Source: Browser Webcam prioritized or C# Camera Stream) */}
+      <main className="relative z-10 flex-1 min-h-0 flex items-center justify-center gap-8 w-full px-4">
+        {/* Khung ngắm */}
+        <div
+          className="relative h-full max-h-[66vh] max-w-[calc(100%-13rem)] bg-neutral-950 overflow-hidden flex items-center justify-center"
+          style={{ aspectRatio: String(viewfinderAspect) }}
+        >
           <video
             ref={videoRef}
             autoPlay
             playsInline
             muted
-            className={`w-full h-full object-cover transition-transform ${
-              isMirrored ? 'scale-x-[-1]' : 'scale-x-1'
-            } ${liveFrameBase64 ? 'hidden' : 'block'}`}
+            className={`w-full h-full object-cover scale-x-[-1] ${source === 'dslr' ? 'hidden' : 'block'}`}
           />
-          {liveFrameBase64 && (
-            <img
-              src={liveFrameBase64}
-              alt="Live View"
-              className={`w-full h-full object-cover transition-transform ${
-                isMirrored ? 'scale-x-[-1]' : 'scale-x-1'
-              }`}
-            />
+          {source === 'dslr' && (
+            <img ref={liveImgRef} alt="" className="w-full h-full object-cover scale-x-[-1]" />
           )}
 
           {!cameraReady && (
-            <div className="absolute inset-0 flex items-center justify-center bg-neutral-900 text-white font-serif-vintage italic text-xl">
+            <div className="absolute inset-0 flex items-center justify-center bg-neutral-900 text-white font-lobster text-xl">
               Đang kết nối camera ...
             </div>
           )}
 
-          {/* Camera Status Badge */}
-          {cameraReady && (
-            <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-white/90 text-xs flex items-center gap-1.5 border border-white/10">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              HD Webcam Live
+          {isSaving && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/55 text-white font-lobster text-2xl z-20">
+              Đang lưu ảnh ...
             </div>
           )}
 
-          {/* Shot Count Badge (Top-left inside viewfinder) */}
-          <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-4 py-1.5 rounded-full text-white font-bold text-sm tracking-wider border border-white/20">
-            Ảnh {currentShot} / {totalShots}
-          </div>
-
-          {/* Mirror Flip Toggle Button (Top-right inside viewfinder) */}
-          <button
-            onClick={() => setIsMirrored(!isMirrored)}
-            className="absolute top-4 right-4 bg-black/60 hover:bg-black/80 backdrop-blur-md p-2.5 rounded-full text-white transition-all border border-white/20 active:scale-95 cursor-pointer"
-            title="Lật gương"
-          >
-            <FlipHorizontal className="w-5 h-5" />
-          </button>
-
-          {/* Prominent Center Countdown Overlay */}
-          {countdown !== null && countdown > 0 && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <span className="text-white text-8xl md:text-9xl font-bold font-serif-vintage italic drop-shadow-[0_10px_20px_rgba(0,0,0,0.8)] animate-countdown">
-                {countdown}
+          {captureError && (
+            <div className="absolute bottom-4 inset-x-0 flex justify-center pointer-events-none z-10">
+              <span className="max-w-[80%] px-5 py-2 rounded-full bg-[#7a0000]/90 text-white text-base font-semibold text-center">
+                {captureError}
               </span>
             </div>
           )}
 
-          {/* Manual Trigger Button for Remote Mode */}
-          {mode === 'remote' && countdown === null && (
-            <div className="absolute bottom-6 inset-x-0 flex justify-center">
-              <button
-                onClick={() => setCountdown(3)}
-                className="btn-favori-primary px-8 py-3 text-lg font-bold flex items-center gap-2 shadow-2xl cursor-pointer"
+          {/* Số đếm ngược mờ giữa khung ngắm */}
+          {countdown !== null && countdown > 0 && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span
+                key={countdown}
+                className="text-white/45 font-bold leading-none tabular-nums animate-countdown"
+                style={{ fontSize: '24vh', fontFamily: 'system-ui, sans-serif' }}
               >
-                <Camera className="w-6 h-6" />
-                Bấm chụp
-              </button>
+                {countdown}
+              </span>
             </div>
           )}
         </div>
+
+        {/* Cột phải: đồng hồ + số tấm đã chụp */}
+        <aside className="w-40 flex-shrink-0 h-full max-h-[66vh] flex flex-col items-center">
+          <div className="h-24 flex flex-col items-center justify-start text-center">
+            {isRemote && (
+              <>
+                <span className="text-[#c1121f] text-xs font-semibold leading-tight">
+                  Thời gian còn lại
+                </span>
+                <span className="text-[#c1121f] text-2xl font-bold tabular-nums mt-1">
+                  {remoteTimeLeft}s
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="flex-1 flex flex-col items-center justify-center gap-8">
+            <span className="text-[#1f1610] text-4xl font-bold tabular-nums">
+              {shotsTaken}/{totalShots}
+            </span>
+
+            {isRemote && (
+              <button
+                type="button"
+                onClick={handleRemoteShot}
+                disabled={isCapturing || isFinished}
+                className={`btn-favori-primary w-28 h-28 !rounded-full flex flex-col items-center justify-center gap-1 text-base font-semibold cursor-pointer shadow-xl ${
+                  isCapturing || isFinished ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                <Camera className="w-8 h-8" />
+                Bấm chụp
+              </button>
+            )}
+          </div>
+
+          <div className="h-24" />
+        </aside>
       </main>
 
-      {/* Bottom Subtitle matching 8.png */}
-      <footer className="relative z-10 w-full flex items-center justify-center pb-4 text-center">
+      <footer className="relative z-10 w-full flex items-center justify-center pt-3 pb-4 text-center">
         <p className="font-lobster text-2xl md:text-3xl text-[#1f1610]">
           Vui lòng đứng trong khung hình nhé
         </p>

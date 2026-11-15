@@ -124,6 +124,51 @@ class IpcBridge {
     }
   }
 
+  /**
+   * Như invoke nhưng KHÔNG đổi lỗi thành dữ liệu giả: host báo lỗi hoặc quá thời gian thì reject.
+   * Dùng cho thao tác phần cứng cần biết thất bại thật (chụp bằng máy ảnh...).
+   * Chạy trên trình duyệt (không có host) vẫn trả dữ liệu mock.
+   */
+  public invokeStrict<TResult = any, TPayload = any>(
+    command: string,
+    payload?: TPayload,
+    timeoutMs = 30000,
+  ): Promise<TResult> {
+    if (!this.isWebView2Available) {
+      return this.handleMockCommand<TResult>(command, payload);
+    }
+
+    const id = `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const request: IpcRequest<TPayload> = { id, command, payload: payload as TPayload };
+
+    return new Promise<TResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pendingRequests.delete(id)) {
+          reject(new Error(`Hết thời gian chờ phản hồi (${Math.round(timeoutMs / 1000)}s)`));
+        }
+      }, timeoutMs);
+
+      this.pendingRequests.set(id, {
+        resolve: (val) => {
+          clearTimeout(timer);
+          resolve(val);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err instanceof Error ? err : new Error(String(err)));
+        },
+      });
+
+      try {
+        (window as any).chrome.webview.postMessage(JSON.stringify(request));
+      } catch (e) {
+        clearTimeout(timer);
+        this.pendingRequests.delete(id);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      }
+    });
+  }
+
   public on<T = any>(event: string, listener: EventListener<T>): () => void {
     if (!this.eventListeners.has(event)) {
       this.eventListeners.set(event, new Set());
@@ -185,19 +230,6 @@ class IpcBridge {
                 displayOrder: 2,
               },
               {
-                id: 3,
-                layoutId: "2x3",
-                layoutName: "Lưới 6 ảnh (2x3 Postcard)",
-                categoryId: 1,
-                categoryName: "Hot Trend",
-                name: "Summer Pastel 6 Ô (2x3)",
-                frameUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145335_d98a8979cee64db5aa88733b8ef4f415.png",
-                thumbnailUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145335_1654b14c10404898893ed260471f2268.png",
-                holes: [{ x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }],
-                isActive: true,
-                displayOrder: 3,
-              },
-              {
                 id: 4,
                 layoutId: "2x2",
                 layoutName: "Lưới 4 ảnh vuông (2x2 Grid)",
@@ -209,20 +241,13 @@ class IpcBridge {
                 holes: [{ x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }],
                 isActive: true,
                 displayOrder: 4,
-              },
-              {
-                id: 5,
-                layoutId: "2x3",
-                layoutName: "Lưới 6 ảnh (2x3 Postcard)",
-                categoryId: 1,
-                categoryName: "Hot Trend",
-                name: "Classic Grid 6 Ô (2x3)",
-                frameUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145337_4bf1448a22e64befb10790b6f65b0d4f.png",
-                thumbnailUrl: "https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145338_31b0f886dd204c4d81cce153676cb05d.png",
-                holes: [{ x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }, { x: 0, y: 0, w: 0, h: 0, rotation: 0 }],
-                isActive: true,
-                displayOrder: 5,
               }
+            ] as any);
+            break;
+          case 'get_layouts':
+            resolve([
+              { id: '1x4', name: 'Dài 4 ảnh 1 cột', slug: '1x4', widthPx: 1200, heightPx: 3600, holeCount: 4, isActive: true, displayOrder: 1, pricingTiers: [{ quantity: 2, price: 80000 }] },
+              { id: '2x2', name: '2 hàng 4 ảnh 2 cột', slug: '2x2', widthPx: 2400, heightPx: 3600, holeCount: 4, isActive: true, displayOrder: 2, pricingTiers: [{ quantity: 2, price: 120000 }] },
             ] as any);
             break;
           case 'get_presets':
@@ -246,8 +271,20 @@ class IpcBridge {
             resolve({
               success: true,
               compositePath: 'mock://composite.jpg',
-              qrUrl: 'https://hihibooth.vn/share/mock-1234',
+              qrUrl: '',
+              qrDataUrl: '',
               previewBase64: '',
+            } as any);
+            break;
+          case 'session_progress':
+            resolve({
+              cloudActive: false,
+              state: 'none',
+              uploadedFiles: 0,
+              skippedFiles: 0,
+              totalFiles: 0,
+              videoEncoding: false,
+              videoUrl: '',
             } as any);
             break;
           case 'print_session':

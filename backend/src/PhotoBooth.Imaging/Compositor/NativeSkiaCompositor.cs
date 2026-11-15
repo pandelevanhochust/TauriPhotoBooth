@@ -35,29 +35,27 @@ public class NativeSkiaCompositor : IImageComposer
             // Create ColorFilter from template.FilterCode if specified
             using var colorFilter = GetColorFilter(template.FilterCode);
 
-            // 2. Render each hole with Center-Crop and ColorFilter
-            for (int i = 0; i < template.Holes.Count; i++)
+            // 2. Ảnh luôn nằm DƯỚI frame để hoạ tiết đè lên mép ô không bị che
+            for (int i = 0; i < template.Holes.Count && i < rawPhotoPaths.Count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                if (i >= rawPhotoPaths.Count) break;
                 string photoPath = rawPhotoPaths[i];
                 if (!File.Exists(photoPath)) continue;
 
-                var hole = template.Holes[i];
                 using var rawBitmap = SKBitmap.Decode(photoPath);
                 if (rawBitmap == null) continue;
 
-                // Render with Center-Crop Cover and preset color filter into hole coordinates
-                RenderCenterCrop(canvas, rawBitmap, hole.X, hole.Y, hole.Width, hole.Height, hole.CornerRadius, colorFilter);
+                RenderPhotoInHole(canvas, rawBitmap, template.Holes[i], colorFilter);
             }
 
-            // 3. Render Frame Overlay if template image exists
+            // 3. Frame phủ lên trên; ô bị tô màu mẫu được khoét trong suốt trước để lộ ảnh
             if (!string.IsNullOrEmpty(template.OverlayImagePath) && File.Exists(template.OverlayImagePath))
             {
-                using var overlayBitmap = SKBitmap.Decode(template.OverlayImagePath);
+                using var overlayBitmap = FrameOverlayHelper.DecodeWithAlpha(template.OverlayImagePath);
                 if (overlayBitmap != null)
                 {
+                    FrameOverlayHelper.OpenPaintedHoles(overlayBitmap, template.Holes, targetWidth, targetHeight);
                     var destRect = new SKRect(0, 0, targetWidth, targetHeight);
                     using var paint = new SKPaint();
                     canvas.DrawBitmap(overlayBitmap, destRect, paint);
@@ -97,48 +95,50 @@ public class NativeSkiaCompositor : IImageComposer
         }, cancellationToken);
     }
 
-    private static void RenderCenterCrop(SKCanvas canvas, SKBitmap bitmap, int x, int y, int width, int height, int cornerRadius, SKColorFilter? colorFilter = null)
+    /// <summary>
+    /// Vẽ ảnh phủ kín ô, có áp phóng to và độ lệch người dùng chỉnh ở bước chọn ảnh.
+    /// Công thức khớp với bản xem trước ở UI (FavoriPhotoSelectScreen / photoTransform.ts).
+    /// </summary>
+    private static void RenderPhotoInHole(SKCanvas canvas, SKBitmap bitmap, HoleLocation hole, SKColorFilter? colorFilter)
     {
-        float targetRatio = (float)width / height;
-        float srcRatio = (float)bitmap.Width / bitmap.Height;
+        if (hole.Width <= 0 || hole.Height <= 0 || bitmap.Width <= 0 || bitmap.Height <= 0) return;
 
-        SKRect srcRect;
-        if (srcRatio > targetRatio)
+        double userScale = double.IsFinite(hole.PhotoScale) ? Math.Clamp(hole.PhotoScale, 1.0, 5.0) : 1.0;
+        double k = Math.Max((double)hole.Width / bitmap.Width, (double)hole.Height / bitmap.Height) * userScale;
+        double drawW = bitmap.Width * k;
+        double drawH = bitmap.Height * k;
+
+        // Giới hạn độ lệch để ảnh luôn phủ kín ô
+        double maxX = (drawW / hole.Width - 1) / 2;
+        double maxY = (drawH / hole.Height - 1) / 2;
+        double ox = double.IsFinite(hole.PhotoOffsetX) ? Math.Clamp(hole.PhotoOffsetX, -maxX, maxX) : 0;
+        double oy = double.IsFinite(hole.PhotoOffsetY) ? Math.Clamp(hole.PhotoOffsetY, -maxY, maxY) : 0;
+
+        double cx = hole.X + hole.Width / 2.0 + ox * hole.Width;
+        double cy = hole.Y + hole.Height / 2.0 + oy * hole.Height;
+        var destRect = new SKRect(
+            (float)(cx - drawW / 2), (float)(cy - drawH / 2),
+            (float)(cx + drawW / 2), (float)(cy + drawH / 2));
+        var holeRect = new SKRect(hole.X, hole.Y, hole.X + hole.Width, hole.Y + hole.Height);
+
+        using var paint = new SKPaint { IsAntialias = true, ColorFilter = colorFilter };
+        using var image = SKImage.FromBitmap(bitmap);
+
+        canvas.Save();
+        if (hole.CornerRadius > 0)
         {
-            // Bitmap is wider than target slot: crop left & right
-            float cropWidth = bitmap.Height * targetRatio;
-            float cropX = (bitmap.Width - cropWidth) / 2f;
-            srcRect = new SKRect(cropX, 0, cropX + cropWidth, bitmap.Height);
+            using var clipPath = new SKPath();
+            clipPath.AddRoundRect(holeRect, hole.CornerRadius, hole.CornerRadius);
+            canvas.ClipPath(clipPath, antialias: true);
         }
         else
         {
-            // Bitmap is taller than target slot: crop top & bottom
-            float cropHeight = bitmap.Width / targetRatio;
-            float cropY = (bitmap.Height - cropHeight) / 2f;
-            srcRect = new SKRect(0, cropY, bitmap.Width, cropY + cropHeight);
+            canvas.ClipRect(holeRect);
         }
-
-        var destRect = new SKRect(x, y, x + width, y + height);
-        using var paint = new SKPaint
-        {
-            IsAntialias = true,
-            ColorFilter = colorFilter
-        };
-
-        if (cornerRadius > 0)
-        {
-            canvas.Save();
-            using var roundRectPath = new SKPath();
-            roundRectPath.AddRoundRect(destRect, cornerRadius, cornerRadius);
-            canvas.ClipPath(roundRectPath, antialias: true);
-            canvas.DrawBitmap(bitmap, srcRect, destRect, paint);
-            canvas.Restore();
-        }
-        else
-        {
-            canvas.DrawBitmap(bitmap, srcRect, destRect, paint);
-        }
+        canvas.DrawImage(image, destRect, new SKSamplingOptions(SKCubicResampler.Mitchell), paint);
+        canvas.Restore();
     }
+
 
     private static SKColorFilter? GetColorFilter(string? filterCode)
     {

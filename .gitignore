@@ -11,6 +11,7 @@ dist-ssr/
 *.local
 
 # OS files
+
 Thumbs.db
 [Dd]esktop.ini
 $RECYCLE.BIN/
@@ -20,3 +21,13 @@ $RECYCLE.BIN/
 *.db-wal
 *.db-shm
 heartbeat.txt
+
+# Canon EDSDK: thư viện độc quyền của Canon, chép thủ công vào backend/lib/EDSDK (không commit)
+backend/lib/EDSDK/*.dll
+
+# FUJIFILM X SDK runtime: độc quyền của Fujifilm, chép thủ công (không commit)
+backend/lib/FujiXSDK/*.dll
+backend/lib/FujiXSDK/*.DAT
+
+# Bản đóng gói (scripts/publish.ps1)
+publish/

@@ -21,6 +21,9 @@ export interface PhotoFrameDto {
   isActive: boolean;
   displayOrder: number;
   createdAt?: string;
+  qrX?: number | null;
+  qrY?: number | null;
+  qrSize?: number | null;
 }
 
 export interface PhotoFilterDto {
@@ -58,27 +61,69 @@ export interface FrameOption {
   categoryName?: string;
   bgColor?: string;
   borderColor?: string;
+  /** Vị trí in QR tải ảnh (theo % frame, từ CMS): tâm qrX/qrY, cạnh qrSize theo chiều rộng. null = không in QR. */
+  qrX?: number | null;
+  qrY?: number | null;
+  qrSize?: number | null;
+}
+
+export interface PricingTier {
+  quantity: number;
+  price: number;
+}
+
+/** Layout (kích cỡ ảnh) từ API GET /api/layouts: quyết định giá tiền và nhóm Frame hiển thị. */
+export interface LayoutOption {
+  id: string;
+  name: string;
+  slug: string;
+  widthPx: number;
+  heightPx: number;
+  holeCount: number;
+  pricingTiers: PricingTier[];
+  displayOrder: number;
+  isActive?: boolean;
 }
 
 const BACKEND_BASE_URL = (import.meta.env.VITE_BACKEND_API_URL || 'http://129.221.221.113:8080').replace(/\/+$/, '');
 
+// Dùng khi không gọi được CMS lẫn host
+const FALLBACK_LAYOUTS: LayoutOption[] = [
+  {
+    id: '1x4',
+    name: 'Dài 4 ảnh 1 cột',
+    slug: '1x4',
+    widthPx: 1200,
+    heightPx: 3600,
+    holeCount: 4,
+    pricingTiers: [{ quantity: 2, price: 80000 }],
+    displayOrder: 1,
+  },
+  {
+    id: '2x2',
+    name: '2 hàng 4 ảnh 2 cột',
+    slug: '2x2',
+    widthPx: 2400,
+    heightPx: 3600,
+    holeCount: 4,
+    pricingTiers: [{ quantity: 2, price: 120000 }],
+    displayOrder: 2,
+  },
+];
+
 /**
- * Ánh xạ giữa kích cỡ giao diện (PhotoSizeType: strip2x6, postcard4x6, special4x6)
- * sang các LayoutId tương ứng trong cơ sở dữ liệu CMS (1x4, 2x2, 2x3, ...).
+ * Tính tổng tiền cho `quantity` bản in theo bảng giá của layout.
+ * Khớp đúng tier thì lấy giá tier; không khớp thì nhân theo đơn giá của tier gần nhất.
  */
-export function mapSizeToLayoutIds(size?: string): string[] {
-  if (!size) return [];
-  const s = size.toLowerCase().trim();
-  if (s === 'strip2x6' || s.includes('2x6') || s === '1x4' || s.includes('strip')) {
-    return ['1x4', 'strip2x6', 'strips_2x6', '2x6'];
-  }
-  if (s === 'postcard4x6' || s === '2x2' || s.includes('grid')) {
-    return ['2x2', 'postcard4x6', 'grid_4x6', '4x6'];
-  }
-  if (s === 'special4x6' || s === '2x3' || s.includes('postcard')) {
-    return ['2x3', 'special4x6', 'postcard_4x6', '4x6'];
-  }
-  return [s];
+export function priceForQuantity(layout: LayoutOption | undefined, quantity: number): number {
+  const tiers = (layout?.pricingTiers || []).filter((t) => t.quantity > 0);
+  if (tiers.length === 0) return 0;
+  const exact = tiers.find((t) => t.quantity === quantity);
+  if (exact) return exact.price;
+  const nearest = tiers.reduce((best, t) =>
+    Math.abs(t.quantity - quantity) < Math.abs(best.quantity - quantity) ? t : best,
+  );
+  return Math.round((nearest.price / nearest.quantity) * quantity);
 }
 
 /**
@@ -99,18 +144,6 @@ function ensureValidHoles(rawHoles: HoleRectDto[], layoutId: string): HoleRectDt
       { x: 30, y: 440, w: 540, h: 370, rotation: 0 },
       { x: 30, y: 840, w: 540, h: 370, rotation: 0 },
       { x: 30, y: 1240, w: 540, h: 370, rotation: 0 },
-    ];
-  }
-
-  if (l === '2x3' || l.includes('6')) {
-    // 6 ô bưu thiếp
-    return [
-      { x: 35, y: 50, w: 550, h: 500, rotation: 0 },
-      { x: 615, y: 50, w: 550, h: 500, rotation: 0 },
-      { x: 35, y: 580, w: 550, h: 500, rotation: 0 },
-      { x: 615, y: 580, w: 550, h: 500, rotation: 0 },
-      { x: 35, y: 1110, w: 550, h: 500, rotation: 0 },
-      { x: 615, y: 1110, w: 550, h: 500, rotation: 0 },
     ];
   }
 
@@ -203,24 +236,6 @@ const FALLBACK_FRAMES: FrameOption[] = [
     ],
   },
   {
-    id: '3',
-    name: 'Summer Pastel 6 Ô (2x3)',
-    layoutId: '2x3',
-    layoutName: 'Lưới 6 ảnh (2x3 Postcard)',
-    categoryId: 1,
-    categoryName: 'Hot Trend',
-    frameUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145335_d98a8979cee64db5aa88733b8ef4f415.png',
-    thumbnailUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145335_1654b14c10404898893ed260471f2268.png',
-    holes: [
-      { x: 35, y: 50, w: 550, h: 500, rotation: 0 },
-      { x: 615, y: 50, w: 550, h: 500, rotation: 0 },
-      { x: 35, y: 580, w: 550, h: 500, rotation: 0 },
-      { x: 615, y: 580, w: 550, h: 500, rotation: 0 },
-      { x: 35, y: 1110, w: 550, h: 500, rotation: 0 },
-      { x: 615, y: 1110, w: 550, h: 500, rotation: 0 },
-    ],
-  },
-  {
     id: '4',
     name: 'Classic Black 4 Ô (2x2)',
     layoutId: '2x2',
@@ -236,27 +251,88 @@ const FALLBACK_FRAMES: FrameOption[] = [
       { x: 615, y: 850, w: 550, h: 750, rotation: 0 },
     ],
   },
-  {
-    id: '5',
-    name: 'Classic Grid 6 Ô (2x3)',
-    layoutId: '2x3',
-    layoutName: 'Lưới 6 ảnh (2x3 Postcard)',
-    categoryId: 1,
-    categoryName: 'Hot Trend',
-    frameUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145337_4bf1448a22e64befb10790b6f65b0d4f.png',
-    thumbnailUrl: 'https://pub-bc5a451086074267b70e4328a218b0c9.r2.dev/frames/20261110_145338_31b0f886dd204c4d81cce153676cb05d.png',
-    holes: [
-      { x: 35, y: 50, w: 550, h: 500, rotation: 0 },
-      { x: 615, y: 50, w: 550, h: 500, rotation: 0 },
-      { x: 35, y: 580, w: 550, h: 500, rotation: 0 },
-      { x: 615, y: 580, w: 550, h: 500, rotation: 0 },
-      { x: 35, y: 1110, w: 550, h: 500, rotation: 0 },
-      { x: 615, y: 1110, w: 550, h: 500, rotation: 0 },
-    ],
-  },
 ];
 
+const sameLayout = (a: string | undefined, b: string | undefined) =>
+  (a || '').toLowerCase().trim() === (b || '').toLowerCase().trim();
+
+// Frame đã khoét ô theo frameUrl; mỗi frame chỉ xin host một lần
+const frameOverlayCache = new Map<string, Promise<string | undefined>>();
+
 export const backendApi = {
+  /**
+   * Frame PNG (data URL) đã được host khoét trong suốt các ô tô màu mẫu, để ảnh nằm dưới frame
+   * mà vẫn lộ ra như bản in. Không có host (chạy trình duyệt) thì trả về undefined.
+   */
+  getFrameOverlay(frame: FrameOption): Promise<string | undefined> {
+    const key = frame.frameUrl;
+    if (!key) return Promise.resolve(undefined);
+    let pending = frameOverlayCache.get(key);
+    if (!pending) {
+      pending = ipc
+        .invoke<{ dataUrl?: string }>('get_frame_overlay', { frameUrl: key, holes: frame.holes })
+        .then((res) => (typeof res?.dataUrl === 'string' && res.dataUrl.startsWith('data:image') ? res.dataUrl : undefined))
+        .catch(() => undefined);
+      pending.then((url) => {
+        if (!url) frameOverlayCache.delete(key);
+      });
+      frameOverlayCache.set(key, pending);
+    }
+    return pending;
+  },
+
+  /**
+   * Lấy danh sách layout (kích cỡ ảnh) từ API GET /api/layouts
+   */
+  async getLayouts(): Promise<LayoutOption[]> {
+    let rawData: any[] | null = null;
+
+    try {
+      const ipcResult = await ipc.invoke<any[]>('get_layouts');
+      if (Array.isArray(ipcResult) && ipcResult.length > 0) {
+        rawData = ipcResult;
+      }
+    } catch (e) {
+      console.warn('[backendApi] IPC get_layouts failed or not available:', e);
+    }
+
+    if (!rawData) {
+      try {
+        const res = await fetch(`${BACKEND_BASE_URL}/api/layouts?onlyActive=false`, {
+          headers: { Accept: 'application/json' },
+        });
+        if (res.ok) {
+          const fetched = await res.json();
+          if (Array.isArray(fetched) && fetched.length > 0) {
+            rawData = fetched;
+          }
+        }
+      } catch (err) {
+        console.warn('[backendApi] Fetch layouts failed:', err);
+      }
+    }
+
+    if (!rawData) return FALLBACK_LAYOUTS;
+
+    const layouts = rawData
+      .filter((l) => l && l.id && l.isActive !== false)
+      .map<LayoutOption>((l) => ({
+        id: String(l.id),
+        name: l.name || String(l.id),
+        slug: l.slug || String(l.id),
+        widthPx: Number(l.widthPx) || 2400,
+        heightPx: Number(l.heightPx) || 3600,
+        holeCount: Number(l.holeCount) || 4,
+        pricingTiers: Array.isArray(l.pricingTiers)
+          ? l.pricingTiers.map((t: any) => ({ quantity: Number(t.quantity) || 0, price: Number(t.price) || 0 }))
+          : [],
+        displayOrder: Number(l.displayOrder) || 0,
+      }))
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+
+    return layouts.length > 0 ? layouts : FALLBACK_LAYOUTS;
+  },
+
   /**
    * Lấy danh sách bộ lọc ảnh từ API GET /api/presets
    */
@@ -306,9 +382,9 @@ export const backendApi = {
 
   /**
    * Lấy danh sách khung ảnh từ API GET /api/frames
-   * Tự động lọc theo layout tương ứng với kích cỡ (strip2x6, postcard4x6, ...)
+   * Có `layoutId` thì chỉ trả về các frame thuộc đúng layout đó (có thể rỗng).
    */
-  async getFrames(layoutOrSize?: string): Promise<FrameOption[]> {
+  async getFrames(layoutId?: string): Promise<FrameOption[]> {
     let rawData: PhotoFrameDto[] | null = null;
 
     // 1. Ưu tiên gọi qua C# Host IPC (bỏ qua mọi giới hạn Mixed Content/SSL của WebView2)
@@ -340,14 +416,7 @@ export const backendApi = {
     }
 
     if (rawData && rawData.length > 0) {
-      // Lọc theo layout tương ứng nếu có
-      const targetLayouts = mapSizeToLayoutIds(layoutOrSize);
-      const filtered = targetLayouts.length > 0
-        ? rawData.filter((f) => targetLayouts.includes((f.layoutId || '').toLowerCase()))
-        : rawData;
-
-      // Nếu có frame khớp layout thì lấy, nếu không lấy toàn bộ frame từ server (không dùng hardcode!)
-      const targetList = filtered.length > 0 ? filtered : rawData;
+      const targetList = layoutId ? rawData.filter((f) => sameLayout(f.layoutId, layoutId)) : rawData;
 
       return targetList.map((f) => {
         const rawHoles: HoleRectDto[] = (f.holes || []).map((h: any) => ({
@@ -378,19 +447,14 @@ export const backendApi = {
           layoutName: f.layoutName,
           categoryId: f.categoryId,
           categoryName: f.categoryName,
+          qrX: typeof f.qrX === 'number' ? f.qrX : null,
+          qrY: typeof f.qrY === 'number' ? f.qrY : null,
+          qrSize: typeof f.qrSize === 'number' ? f.qrSize : null,
         };
       });
     }
 
-    // Nếu không kết nối được mạng, dùng FALLBACK_FRAMES (5 khung ảnh chính thức từ CMS)
-    if (layoutOrSize && layoutOrSize !== 'all') {
-      const targetLayouts = mapSizeToLayoutIds(layoutOrSize);
-      const filteredFallback = targetLayouts.length > 0
-        ? FALLBACK_FRAMES.filter((f) => targetLayouts.includes((f.layoutId || '').toLowerCase()))
-        : FALLBACK_FRAMES;
-      return filteredFallback.length > 0 ? filteredFallback : FALLBACK_FRAMES;
-    }
-
-    return FALLBACK_FRAMES;
+    // Không kết nối được mạng: dùng FALLBACK_FRAMES
+    return layoutId ? FALLBACK_FRAMES.filter((f) => sameLayout(f.layoutId, layoutId)) : FALLBACK_FRAMES;
   },
 };

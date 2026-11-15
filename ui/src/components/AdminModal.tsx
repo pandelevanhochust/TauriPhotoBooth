@@ -1,6 +1,18 @@
 import React, { useState } from 'react';
-import { X, Lock, Printer, Camera, RotateCcw, Sliders, CheckCircle, AlertTriangle } from 'lucide-react';
+import { X, Lock, RotateCcw, Sliders, CheckCircle, AlertTriangle } from 'lucide-react';
 import { ipc } from '../services/ipc';
+import { getKioskSettings, saveKioskSettings, type KioskSettings, type NumericSettingKey } from '../services/kioskSettings';
+import { CameraCheckPanel } from './admin/CameraCheckPanel';
+import { PrinterCheckPanel } from './admin/PrinterCheckPanel';
+import { CloudUploadPanel } from './admin/CloudUploadPanel';
+
+const TIMING_FIELDS: { key: NumericSettingKey; label: string; unit: string }[] = [
+  { key: 'remoteCaptureTimeoutSec', label: 'Thời gian chụp bằng nút bấm', unit: 'giây' },
+  { key: 'autoCountdownSec', label: 'Đếm ngược mỗi tấm (tự động)', unit: 'giây' },
+  { key: 'totalShots', label: 'Số tấm chụp mỗi phiên', unit: 'tấm' },
+  { key: 'filterTimeoutSec', label: 'Thời gian chọn bộ lọc (bước 8)', unit: 'giây' },
+  { key: 'selectTimeoutSec', label: 'Thời gian chọn ảnh (bước 9)', unit: 'giây' },
+];
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -24,7 +36,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   // Admin Dashboard State
   const [paper, setPaper] = useState(currentPaperCount);
   const [mode, setMode] = useState(kioskMode);
-  const [activeTab, setActiveTab] = useState<'status' | 'hardware' | 'reprint'>('status');
+  const [activeTab, setActiveTab] = useState<'status' | 'timing' | 'hardware' | 'reprint'>('status');
+  const [timing, setTiming] = useState<KioskSettings>(() => getKioskSettings());
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   if (!isOpen) return null;
@@ -65,17 +78,6 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     }
   };
 
-  const handleTestPrint = async () => {
-    setActionMessage('Đang gửi lệnh in thử nghiệm...');
-    try {
-      await ipc.invoke('print_test_page');
-      setActionMessage('In thử thành công!');
-    } catch {
-      setActionMessage('Lỗi in thử nghiệm');
-    }
-    setTimeout(() => setActionMessage(null), 3000);
-  };
-
   const handleResetPaper = (count: number) => {
     setPaper(count);
     onUpdateStatus(count, mode);
@@ -85,6 +87,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   const handleSaveSettings = () => {
     onUpdateStatus(paper, mode);
+    // Giá trị ngoài khoảng cho phép sẽ được kẹp lại; có hiệu lực từ phiên chụp kế tiếp
+    setTiming(saveKioskSettings(timing));
     onClose();
   };
 
@@ -170,6 +174,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 Giấy In & Chế Độ
               </button>
               <button
+                onClick={() => setActiveTab('timing')}
+                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
+                  activeTab === 'timing' ? 'bg-rose-500 text-white' : 'bg-white/5 text-gray-400 hover:text-white'
+                }`}
+              >
+                Thời Gian
+              </button>
+              <button
                 onClick={() => setActiveTab('hardware')}
                 className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
                   activeTab === 'hardware' ? 'bg-rose-500 text-white' : 'bg-white/5 text-gray-400 hover:text-white'
@@ -243,36 +255,50 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </div>
               )}
 
+              {activeTab === 'timing' && (
+                <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-3">
+                  {TIMING_FIELDS.map((field) => (
+                    <label key={field.key} className="flex items-center justify-between gap-4">
+                      <span className="text-sm font-semibold text-gray-300">{field.label}</span>
+                      <span className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          min={1}
+                          value={timing[field.key]}
+                          onChange={(e) =>
+                            setTiming((prev) => ({ ...prev, [field.key]: parseInt(e.target.value) || 0 }))
+                          }
+                          className="bg-black/50 border border-white/20 rounded-xl px-3 py-2 text-lg font-bold w-24 text-center text-rose-400"
+                        />
+                        <span className="text-xs text-gray-400 w-8">{field.unit}</span>
+                      </span>
+                    </label>
+                  ))}
+                  <label className="flex items-center justify-between gap-4 pt-3 border-t border-white/10">
+                    <span>
+                      <span className="text-sm font-semibold text-gray-300 block">Ghi video phiên chụp</span>
+                      <span className="text-xs text-gray-400">Lưu timelapse.mp4 vào thư mục ảnh của từng phiên</span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={timing.timelapseEnabled}
+                      onChange={(e) => setTiming((prev) => ({ ...prev, timelapseEnabled: e.target.checked }))}
+                      className="w-6 h-6 accent-rose-500 cursor-pointer"
+                    />
+                  </label>
+                  <p className="text-xs text-gray-400 pt-1">
+                    Nhấn "Lưu Thay Đổi" để áp dụng. Thay đổi có hiệu lực từ phiên chụp kế tiếp.
+                  </p>
+                </div>
+              )}
+
               {activeTab === 'hardware' && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/10">
-                    <div className="flex items-center gap-3">
-                      <Printer className="w-5 h-5 text-rose-400" />
-                      <div>
-                        <div className="font-semibold text-sm">Máy in nhiệt (DNP / Citizen)</div>
-                        <div className="text-xs text-gray-400">Trạng thái: Sẵn sàng (Ready)</div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={handleTestPrint}
-                      className="px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-600 text-xs font-bold transition active:scale-95"
-                    >
-                      In Thử Nghiệm
-                    </button>
-                  </div>
+                  <PrinterCheckPanel />
 
-                  <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/10">
-                    <div className="flex items-center gap-3">
-                      <Camera className="w-5 h-5 text-purple-400" />
-                      <div>
-                        <div className="font-semibold text-sm">Máy ảnh / Camera</div>
-                        <div className="text-xs text-gray-400">Thiết bị: DirectShow / High-Res Mirror</div>
-                      </div>
-                    </div>
-                    <span className="text-xs px-3 py-1 bg-emerald-500/20 text-emerald-400 rounded-full font-mono">
-                      Connected
-                    </span>
-                  </div>
+                  <CloudUploadPanel />
+
+                  <CameraCheckPanel />
                 </div>
               )}
 

@@ -219,6 +219,15 @@ namespace PhotoBooth.Core.Models
         public int Height { get; set; }
         public int CornerRadius { get; set; }
         public double Rotation { get; set; }
+
+        /// <summary>Hệ số phóng to so với cỡ vừa phủ kín ô (>= 1).</summary>
+        public double PhotoScale { get; set; } = 1;
+
+        /// <summary>Độ lệch tâm ảnh so với tâm ô, tính theo tỉ lệ chiều rộng ô.</summary>
+        public double PhotoOffsetX { get; set; }
+
+        /// <summary>Độ lệch tâm ảnh so với tâm ô, tính theo tỉ lệ chiều cao ô.</summary>
+        public double PhotoOffsetY { get; set; }
     }
 
     public class FrameTemplate
