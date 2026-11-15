@@ -36,6 +36,8 @@ public sealed class SessionUploadQueue : IDisposable
     private static readonly TimeSpan AuthPause = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan ConfigRefresh = TimeSpan.FromHours(1);
     private static readonly TimeSpan WarnAfter = TimeSpan.FromHours(1);
+    /// <summary>File của phiên chưa gửi được vẫn giữ trên máy tới bấy lâu kể từ lúc chụp (cùng mức với bộ dọn file).</summary>
+    public static TimeSpan LocalRetention => PhotoBooth.Core.Storage.StorageCleaner.MaxAge;
     private static readonly TimeSpan IdleWait = TimeSpan.FromSeconds(15);
 
     private readonly ManifestStore _store;
@@ -616,8 +618,16 @@ public sealed class SessionUploadQueue : IDisposable
                 PauseForAuth(message);
                 return;
             case 410:
-                _log($"[WARN] Upload queue: phiên {m.LocalSessionId} đã hết hạn trên server ({step}), xoá khỏi máy");
-                Expire(m);
+                // Server đã xoá phiên nên không gửi được nữa; file trên máy vẫn giữ tới khi quá LocalRetention
+                _log($"[WARN] Upload queue: phiên {m.LocalSessionId} đã hết hạn trên server ({step}), ngừng gửi và giữ file trên máy");
+                lock (_gate)
+                {
+                    m.State = ManifestState.Expired;
+                    m.LastError = $"{step}: {text}";
+                    m.LastErrorAt = _now();
+                    m.NextAttemptAt = null;
+                    Save(m);
+                }
                 return;
             case 400:
             case 409 when step == "init":
@@ -672,14 +682,41 @@ public sealed class SessionUploadQueue : IDisposable
 
     // ------------------------------------------------------------------ hết hạn
 
+    /// <summary>
+    /// Phiên đã gửi xong (Ready) bị xoá khỏi máy khi hết hạn lưu (mặc định 24 giờ). Phiên chưa gửi được (Pending / Failed /
+    /// Expired) vẫn được giữ để còn gửi lại hoặc xử lý tay; chỉ xoá khi quá <see cref="LocalRetention"/> kể từ lúc chụp.
+    /// </summary>
     private void PurgeExpired(DateTimeOffset now)
     {
-        List<SessionManifest> expired;
-        lock (_gate) expired = _manifests.Where(m => now >= m.ExpiresAt).ToList();
-        foreach (var m in expired)
+        List<(SessionManifest Manifest, string Reason)> expired;
+        lock (_gate)
         {
-            _log($"[INFO] Upload queue: phiên {m.LocalSessionId} quá {m.RetentionHours} giờ (state {m.State}), xoá khỏi máy");
+            expired = _manifests
+                .Select(m => (Manifest: m, Reason: m.State == ManifestState.Ready && now >= m.ExpiresAt
+                    ? $"đã gửi xong và quá {m.RetentionHours} giờ"
+                    : now - m.CapturedAt >= LocalRetention
+                        ? $"quá {LocalRetention.TotalDays:0} ngày (state {m.State})"
+                        : ""))
+                .Where(x => x.Reason.Length > 0)
+                .ToList();
+        }
+        foreach (var (m, reason) in expired)
+        {
+            _log($"[INFO] Upload queue: phiên {m.LocalSessionId} {reason}, xoá khỏi máy");
             Expire(m);
+        }
+    }
+
+    /// <summary>Phiên này có đang dùng thư mục <paramref name="directory"/> không (bộ dọn file bỏ qua, hàng đợi tự xoá).</summary>
+    public bool ReferencesDirectory(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory)) return false;
+        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        lock (_gate)
+        {
+            return _manifests.Any(m => m.LocalDirectories.Any(d =>
+                !string.IsNullOrWhiteSpace(d)
+                && string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(d)), full, StringComparison.OrdinalIgnoreCase)));
         }
     }
 

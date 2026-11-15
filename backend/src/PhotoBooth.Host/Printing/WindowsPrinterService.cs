@@ -382,6 +382,13 @@ public sealed class WindowsPrinterService : IPrinterService
         }
     }
 
+    /// <summary>
+    /// Nhận biết khổ in theo kích thước ảnh: ảnh một dải (tỉ lệ khoảng 1:3, vd. 1200x3600) là dải 2x6, in hai dải
+    /// trên tờ 4x6 rồi cắt đôi; ảnh khác (vd. 2400x3600, tỉ lệ 2:3) là ảnh 4x6.
+    /// </summary>
+    public static PaperType DetectPaperType(int width, int height) =>
+        width * 2.5 < height || height * 2.5 < width ? PaperType.DoubleStrip2x6 : PaperType.Card4x6;
+
     private void Report(string jobId, int percent, string text) =>
         JobProgress?.Invoke(this, new PrintJobProgressEventArgs { JobId = jobId, ProgressPercent = percent, StatusText = text });
 
@@ -394,7 +401,7 @@ public sealed class WindowsPrinterService : IPrinterService
         using var image = Image.FromFile(request.ImagePath);
 
         // Ảnh một dải (tỉ lệ ~1:3): app tự xếp hai dải cạnh nhau. Ảnh ghép layout dải (2400x3600) đã có sẵn hai dải.
-        bool singleStripImage = image.Width * 2.5 < image.Height || image.Height * 2.5 < image.Width;
+        bool singleStripImage = DetectPaperType(image.Width, image.Height) == PaperType.DoubleStrip2x6;
         bool needsCut = singleStripImage || request.PaperType == PaperType.DoubleStrip2x6;
         int copies = Math.Max(1, request.Copies);
         // Mỗi tờ 4x6 cắt ra hai dải

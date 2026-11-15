@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FavoriLayout } from './FavoriLayout';
 import { Loader2 } from 'lucide-react';
 import { backendApi, type FilterOption } from '../../services/backendApi';
 import { useCountdown } from '../../hooks/useCountdown';
+import { ipc } from '../../services/ipc';
 
 export type { FilterOption };
 
@@ -32,18 +33,32 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
 
   const timeLeft = useCountdown(timeoutSec, onNext);
 
+  // Bộ lọc đang chọn, đọc trong callback của sự kiện mà không phải đăng ký lại
+  const selectedRef = useRef(selectedFilter);
+  selectedRef.current = selectedFilter;
+
   useEffect(() => {
     let isMounted = true;
-    backendApi.getPresets().then((data) => {
-      if (!isMounted) return;
-      setFilters(data);
-      setLoading(false);
-      // Luôn truyền filterObj lên App (kể cả khi id đã khớp) để bước sau có cssFilter
-      const current = data.find((f) => f.id === selectedFilter || f.code === selectedFilter) || data[0];
-      if (current) onSelectFilter(current.id, current);
+    const load = () =>
+      backendApi.getPresets().then((data) => {
+        if (!isMounted) return;
+        setFilters(data);
+        setLoading(false);
+        // Luôn truyền filterObj lên App (kể cả khi id đã khớp) để bước sau có cssFilter mới nhất
+        const sel = selectedRef.current;
+        const current = data.find((f) => f.id === sel || f.code === sel) || data[0];
+        if (current) onSelectFilter(current.id, current);
+      });
+
+    // Host trả ngay bản đã lưu rồi hỏi server ngầm; server có thay đổi thì tải lại danh sách
+    const unlisten = ipc.listen<{ key?: string }>('cms_updated', (data) => {
+      if (data?.key === 'presets') load();
     });
+    load();
+
     return () => {
       isMounted = false;
+      unlisten();
     };
   }, []);
 

@@ -12,7 +12,7 @@ import { FavoriPhotoSelectScreen } from './components/favori/FavoriPhotoSelectSc
 import { FavoriPrintScreen } from './components/favori/FavoriPrintScreen';
 import { AdminModal } from './components/AdminModal';
 import { ipc } from './services/ipc';
-import { priceForQuantity } from './services/backendApi';
+import { priceForQuantity, smallestHoleAspect } from './services/backendApi';
 import type { FrameOption, FilterOption, LayoutOption } from './services/backendApi';
 import { getKioskSettings, type KioskSettings } from './services/kioskSettings';
 import type { PhotoTransform } from './services/photoTransform';
@@ -207,6 +207,7 @@ export const App: React.FC = () => {
           countdownSec={settings.autoCountdownSec}
           remoteTimeoutSec={settings.remoteCaptureTimeoutSec}
           timelapseEnabled={settings.timelapseEnabled}
+          guideAspect={smallestHoleAspect(selectedFrameObj?.holes)}
           onAllShotsCaptured={(newPhotos, paths) => {
             setCapturedPhotos(newPhotos);
             setCapturedPaths(paths);
@@ -238,6 +239,7 @@ export const App: React.FC = () => {
           layout={selectedLayout}
           filterCss={selectedFilterObj?.cssFilter}
           timeoutSec={settings.selectTimeoutSec}
+          onBack={() => setStep('filter')}
           onConfirm={(slotted, transforms) => {
             setSlottedPhotos(slotted);
             setSlottedPaths(slotted.map((p) => capturedPaths[capturedPhotos.indexOf(p)] || ''));

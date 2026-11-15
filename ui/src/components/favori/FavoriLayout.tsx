@@ -44,8 +44,9 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
         style={{ backgroundImage: `url('/favori/Background.png')` }}
       />
 
-      {typeof timeLeft === 'number' && (
-        <div className="absolute top-3 left-6 z-20 text-[#1f1610] text-base font-semibold tabular-nums">
+      {/* Màn không có chân trang thì đồng hồ nằm góc trên trái; có chân trang thì nằm giữa hàng nút (bên dưới) */}
+      {typeof timeLeft === 'number' && !(onBack || onNext) && (
+        <div className="absolute top-3 left-6 z-20 text-[#c1121f] text-base font-semibold tabular-nums">
           Thời gian còn lại: {timeLeft}s
         </div>
       )}
@@ -109,8 +110,8 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
 
       {/* Standard Bottom Navigation Controls */}
       {(onBack || onNext) && (
-        <footer className="relative z-10 w-full flex items-center justify-between px-8 pb-4">
-          <div>
+        <footer className="relative z-10 w-full grid grid-cols-[1fr_auto_1fr] items-center px-8 pb-4">
+          <div className="justify-self-start">
             {onBack ? (
               <button
                 onClick={onBack}
@@ -121,7 +122,16 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
             ) : <div />}
           </div>
 
-          <div>
+          {typeof timeLeft === 'number' ? (
+            <div className="flex flex-col items-center leading-tight text-[#c1121f]">
+              <span className="text-xs font-semibold">Thời gian còn lại</span>
+              <span className="text-3xl font-bold tabular-nums">{timeLeft}s</span>
+            </div>
+          ) : (
+            <div />
+          )}
+
+          <div className="justify-self-end">
             {onNext && (
               <button
                 onClick={onNext}

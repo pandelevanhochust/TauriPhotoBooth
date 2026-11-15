@@ -109,14 +109,35 @@ public partial class App : Application
         base.OnExit(e);
     }
 
+    private static readonly object LogLock = new();
+    private static int _logWrites;
+    /// <summary>Log vượt cỡ này thì đổi tên thành host_startup.1.log (giữ một bản cũ, bộ dọn file xoá sau 7 ngày).</summary>
+    private const long MaxLogBytes = 20L * 1024 * 1024;
+
     public static void Log(string message)
     {
         string entry = $"[{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff}] {message}";
         try
         {
-            string dir = Path.GetDirectoryName(LogFile)!;
-            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            File.AppendAllText(LogFile, entry + Environment.NewLine);
+            lock (LogLock)
+            {
+                string dir = Path.GetDirectoryName(LogFile)!;
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                if (_logWrites++ % 200 == 0) RotateLogIfLarge();
+                File.AppendAllText(LogFile, entry + Environment.NewLine);
+            }
+        }
+        catch { }
+    }
+
+    private static void RotateLogIfLarge()
+    {
+        try
+        {
+            var info = new FileInfo(LogFile);
+            if (!info.Exists || info.Length < MaxLogBytes) return;
+            string backup = Path.ChangeExtension(LogFile, ".1.log");
+            File.Move(LogFile, backup, overwrite: true);
         }
         catch { }
     }

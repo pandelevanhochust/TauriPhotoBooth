@@ -28,6 +28,19 @@ export interface PrintCalibration {
   stripGapMm: number;
 }
 
+export interface PickedImagePrintResult {
+  cancelled?: boolean;
+  success?: boolean;
+  message?: string;
+  fileName?: string;
+  width?: number;
+  height?: number;
+  /** Khổ host nhận theo kích thước ảnh. */
+  kind?: '2x6' | '4x6';
+  sheets?: number;
+  remainingPaper?: number;
+}
+
 /** Tình trạng máy in do host báo về (hàng đợi in của Windows). */
 export interface PrinterStatus {
   ready: boolean;
@@ -95,6 +108,15 @@ export const printerApi = {
     } catch {
       return OFFLINE;
     }
+  },
+
+  /**
+   * Mở hộp chọn file của Windows, rồi in ảnh đã chọn; khổ 2x6 hay 4x6 do host nhận theo kích thước ảnh.
+   * Người dùng đóng hộp thoại không chọn gì thì trả về cancelled. Lỗi thì ném Error với thông báo của host.
+   */
+  printPickedImage(): Promise<PickedImagePrintResult> {
+    // Hộp chọn file chờ người dùng nên cho thời gian chờ dài
+    return ipc.invokeStrict('print_pick_image', undefined, 10 * 60_000);
   },
 
   /** In một trang thử 4x6. Lỗi thì ném Error với thông báo của host. */

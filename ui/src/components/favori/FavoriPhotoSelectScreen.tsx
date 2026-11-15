@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ZoomIn, ZoomOut, RotateCcw, Trash2 } from 'lucide-react';
 import { FavoriLayout } from './FavoriLayout';
 import { backendApi, type FrameOption, type HoleRectDto, type LayoutOption } from '../../services/backendApi';
 import { useCountdown } from '../../hooks/useCountdown';
@@ -16,6 +15,8 @@ interface FavoriPhotoSelectScreenProps {
   layout?: LayoutOption;
   filterCss?: string;
   timeoutSec?: number;
+  /** Quay về bước chọn bộ lọc. */
+  onBack?: () => void;
   /** Nhận ảnh theo đúng thứ tự ô kèm phóng to / độ lệch của từng ô, rồi chuyển bước. */
   onConfirm: (slottedPhotos: string[], transforms: PhotoTransform[]) => void;
 }
@@ -34,7 +35,6 @@ function fallbackHoles(layout?: LayoutOption): HoleRectDto[] {
 }
 
 const DEFAULT_PHOTO_ASPECT = 3 / 2;
-const ZOOM_STEP = 1.2;
 const TAP_SLOP_PX = 6;
 
 interface Gesture {
@@ -44,6 +44,10 @@ interface Gesture {
   startCentroid: { x: number; y: number };
   startDist: number;
   rect: DOMRect;
+  /** Đã kéo quá ngưỡng chạm: không còn là một cú chạm. */
+  moved: boolean;
+  /** Đã có từ 2 ngón: chụm / phóng to chứ không phải chạm để gỡ ảnh. */
+  multi: boolean;
 }
 
 function centroidAndDist(pointers: Map<number, { x: number; y: number }>) {
@@ -60,6 +64,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
   layout,
   filterCss,
   timeoutSec = 180,
+  onBack,
   onConfirm,
 }) => {
   const holes = useMemo<HoleRectDto[]>(
@@ -98,7 +103,6 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
   // slots[i] = chỉ số ảnh trong `photos` đang nằm ở ô i, hoặc null nếu ô trống
   const [slots, setSlots] = useState<(number | null)[]>(() => Array(slotCount).fill(null));
   const [transforms, setTransforms] = useState<PhotoTransform[]>(() => Array(slotCount).fill(IDENTITY_TRANSFORM));
-  const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
   const [photoAspects, setPhotoAspects] = useState<Record<number, number>>({});
 
   const slotsRef = useRef(slots);
@@ -147,7 +151,6 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
   const handleClearSlot = (slotIndex: number) => {
     setSlots((prev) => prev.map((s, i) => (i === slotIndex ? null : s)));
     resetSlotTransform(slotIndex);
-    setSelectedSlot((cur) => (cur === slotIndex ? null : cur));
   };
 
   const confirm = (current: (number | null)[]) => {
@@ -181,6 +184,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
   // --- Kéo bằng 1 ngón, phóng to/thu nhỏ bằng 2 ngón ---
   const beginGesture = (sIdx: number, el: HTMLElement, pointers: Map<number, { x: number; y: number }>) => {
     const { centroid, dist } = centroidAndDist(pointers);
+    const prev = gestureRef.current && gestureRef.current.slot === sIdx ? gestureRef.current : null;
     gestureRef.current = {
       slot: sIdx,
       pointers,
@@ -188,12 +192,14 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
       startCentroid: centroid,
       startDist: dist,
       rect: el.getBoundingClientRect(),
+      // Giữ lại để biết cả thao tác (nhấc / đặt ngón giữa chừng) có phải một cú chạm đơn không
+      moved: prev?.moved ?? false,
+      multi: (prev?.multi ?? false) || pointers.size >= 2,
     };
   };
 
   const handlePointerDown = (sIdx: number) => (e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
-    setSelectedSlot(sIdx);
     const g = gestureRef.current;
     const pointers = g && g.slot === sIdx ? g.pointers : new Map<number, { x: number; y: number }>();
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -207,7 +213,8 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
     const { centroid, dist } = centroidAndDist(g.pointers);
     const dx = centroid.x - g.startCentroid.x;
     const dy = centroid.y - g.startCentroid.y;
-    if (g.pointers.size < 2 && Math.hypot(dx, dy) < TAP_SLOP_PX) return;
+    if (g.pointers.size >= 2 || Math.hypot(dx, dy) >= TAP_SLOP_PX) g.moved = true;
+    if (!g.moved) return;
     const scale = g.pointers.size >= 2 && g.startDist > 0 ? g.start.scale * (dist / g.startDist) : g.start.scale;
     setSlotTransform(sIdx, {
       scale,
@@ -221,7 +228,10 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
     if (!g || g.slot !== sIdx) return;
     g.pointers.delete(e.pointerId);
     if (g.pointers.size === 0) {
+      // Chạm nhẹ (không kéo, không chụm) vào ảnh trong khung: gỡ ảnh ra khỏi khung
+      const isTap = e.type === 'pointerup' && !g.moved && !g.multi;
       gestureRef.current = null;
+      if (isTap) handleClearSlot(sIdx);
     } else {
       // Nhấc 1 trong 2 ngón: tiếp tục kéo bằng ngón còn lại từ vị trí hiện tại
       beginGesture(sIdx, e.currentTarget, g.pointers);
@@ -229,19 +239,9 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
   };
 
   const handleWheel = (sIdx: number) => (e: React.WheelEvent<HTMLDivElement>) => {
-    setSelectedSlot(sIdx);
     const cur = transformsRef.current[sIdx] || IDENTITY_TRANSFORM;
     setSlotTransform(sIdx, { ...cur, scale: cur.scale * Math.exp(-e.deltaY * 0.0015) });
   };
-
-  const zoomSelected = (factor: number) => {
-    if (selectedSlot === null) return;
-    const cur = transformsRef.current[selectedSlot] || IDENTITY_TRANSFORM;
-    setSlotTransform(selectedSlot, { ...cur, scale: cur.scale * factor });
-  };
-
-  const selectedHasPhoto = selectedSlot !== null && slots[selectedSlot] !== null;
-  const selectedScale = selectedSlot !== null ? transforms[selectedSlot]?.scale ?? 1 : 1;
 
   const holeBox = (hole: HoleRectDto) => ({
     left: `${(hole.x / canvas.w) * 100}%`,
@@ -250,14 +250,13 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
     height: `${(hole.h / canvas.h) * 100}%`,
   });
 
-  const toolButton =
-    'w-14 h-14 rounded-full border-2 border-[#7a0000] bg-white/80 text-[#7a0000] flex items-center justify-center cursor-pointer transition-transform active:scale-90 disabled:opacity-35 disabled:cursor-not-allowed';
-
   return (
     <FavoriLayout
       stepNumber={9}
       stepTitle="Chọn ảnh để in"
+      onBack={onBack}
       onNext={() => confirm(slots)}
+      nextLabel="In ảnh"
       disableNext={!isComplete}
       timeLeft={timeLeft}
       wide
@@ -295,7 +294,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
         {/* Frame xem trước: ảnh nằm DƯỚI frame, giống bản in */}
         <div className="flex flex-col items-center flex-shrink-0 h-full">
           <div
-            className="relative h-[calc(100%-5rem)] bg-white overflow-hidden"
+            className="relative h-full bg-white overflow-hidden"
             style={{ aspectRatio: `${canvas.w} / ${canvas.h}` }}
           >
             {holes.map((hole, sIdx) => {
@@ -347,53 +346,12 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
                   onPointerUp={handlePointerEnd(sIdx)}
                   onPointerCancel={handlePointerEnd(sIdx)}
                   onWheel={handleWheel(sIdx)}
-                  className={`absolute z-30 cursor-grab active:cursor-grabbing ${
-                    selectedSlot === sIdx ? 'outline-2 outline-dashed outline-white -outline-offset-4' : ''
-                  }`}
+                  className="absolute z-30 cursor-grab active:cursor-grabbing"
                 />
               ) : null,
             )}
           </div>
 
-          {/* Công cụ cho ô đang chọn */}
-          <div className="h-20 flex items-center justify-center gap-4">
-            {selectedHasPhoto ? (
-              <>
-                <button
-                  type="button"
-                  aria-label="Thu nhỏ"
-                  className={toolButton}
-                  disabled={selectedScale <= 1.001}
-                  onClick={() => zoomSelected(1 / ZOOM_STEP)}
-                >
-                  <ZoomOut className="w-6 h-6" />
-                </button>
-                <button type="button" aria-label="Phóng to" className={toolButton} onClick={() => zoomSelected(ZOOM_STEP)}>
-                  <ZoomIn className="w-6 h-6" />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Căn lại"
-                  className={toolButton}
-                  onClick={() => selectedSlot !== null && resetSlotTransform(selectedSlot)}
-                >
-                  <RotateCcw className="w-6 h-6" />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Gỡ ảnh khỏi ô"
-                  className={toolButton}
-                  onClick={() => selectedSlot !== null && handleClearSlot(selectedSlot)}
-                >
-                  <Trash2 className="w-6 h-6" />
-                </button>
-              </>
-            ) : (
-              <span className="text-[#6b5b52] text-sm text-center max-w-[360px]">
-                Chạm vào ảnh trong khung để kéo, phóng to hoặc thu nhỏ
-              </span>
-            )}
-          </div>
         </div>
       </div>
     </FavoriLayout>

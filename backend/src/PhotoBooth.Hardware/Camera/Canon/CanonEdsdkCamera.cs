@@ -18,7 +18,7 @@ namespace PhotoBooth.Hardware.Camera.Canon;
 /// đang chạy thật với EOS R10. Có thẻ nhớ: lưu "cả hai", vì R50 có thẻ không gửi ảnh về khi chỉ lưu Host.
 /// Máy rút ra / cắm lại sẽ được tự kết nối lại sau khoảng 2 giây.
 /// </summary>
-public sealed class CanonEdsdkCamera : ITetheredCamera
+public sealed class CanonEdsdkCamera : ITetheredCamera, IRemoteShutterSource
 {
     private static readonly TimeSpan ReconnectInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan EvfInterval = TimeSpan.FromMilliseconds(33);
@@ -64,11 +64,17 @@ public sealed class CanonEdsdkCamera : ITetheredCamera
     private bool _pendingShotSawNonJpeg;
     private DateTime? _halfPressedAt;
     private Task<CapturePhotoResult>? _lastDownload;
+    // Chế độ chụp bằng điều khiển từ xa: ảnh do máy tự chụp được tải về thư mục này (null = tắt)
+    private string? _remoteDir;
+    private string? _lastRemoteName;
+    private DateTime _lastRemoteAt = DateTime.MinValue;
 
     public event EventHandler<FrameLeaseEventArgs>? FrameArrived;
     public event EventHandler<CameraStatusChangedEventArgs>? StatusChanged;
 
     public event EventHandler<CameraInfo>? InfoChanged;
+
+    public event EventHandler<string>? RemotePhotoDownloaded;
 
     public string Vendor => "Canon";
 
@@ -195,6 +201,43 @@ public sealed class CanonEdsdkCamera : ITetheredCamera
         var download = AwaitDownloadAsync(start.Task!, cancellationToken);
         _lastDownload = download;
         return new ShotTicket(OperationResult.Ok(), download);
+    }
+
+    /// <summary>Bật / tắt nhận ảnh do nút chụp hoặc điều khiển từ xa của máy chụp (như chế độ remote của FavoriCurrent).</summary>
+    public Task SetRemoteShutterAsync(string? destinationDirectory)
+    {
+        EnsureThread();
+        return Invoke(() =>
+        {
+            if (destinationDirectory != null) Directory.CreateDirectory(destinationDirectory);
+            bool changed = (_remoteDir == null) != (destinationDirectory == null);
+            _remoteDir = destinationDirectory;
+            _log($"[INFO] Canon remote shutter {(destinationDirectory != null ? "ON -> " + destinationDirectory : "OFF")}");
+            if (changed && _cam != IntPtr.Zero && _liveViewActive) ApplyEvfOutput();
+            return true;
+        });
+    }
+
+    /// <summary>
+    /// Live view ra máy tính; chế độ điều khiển từ xa thì ra cả màn hình sau của máy và mở khoá nút trên máy,
+    /// vì một số máy khoá nút chụp khi live view chỉ ra máy tính.
+    /// </summary>
+    private uint ApplyEvfOutput()
+    {
+        uint dev = _remoteDir != null ? EvfOutputDevice_TFT_PC : EvfOutputDevice_PC;
+        uint err = EdsSetPropertyData(_cam, PropID_Evf_OutputDevice, 0, sizeof(uint), ref dev);
+        if (err != EDS_ERR_OK && dev == EvfOutputDevice_TFT_PC)
+        {
+            _log($"[WARN] Canon live view TFT+PC failed {Hex(err)}, dùng PC");
+            dev = EvfOutputDevice_PC;
+            err = EdsSetPropertyData(_cam, PropID_Evf_OutputDevice, 0, sizeof(uint), ref dev);
+        }
+        if (err == EDS_ERR_OK && _remoteDir != null)
+        {
+            uint unlock = EdsSendStatusCommand(_cam, CameraState_UIUnLock, 0);
+            if (unlock != EDS_ERR_OK) _log($"[WARN] Canon UI unlock failed {Hex(unlock)}");
+        }
+        return err;
     }
 
     /// <summary>Nhấn nửa cò để lấy nét trước; tấm chụp trong vài giây tới sẽ nhả màn trập ngay.</summary>
@@ -549,8 +592,7 @@ public sealed class CanonEdsdkCamera : ITetheredCamera
         uint mode = 1;
         EdsSetPropertyData(_cam, PropID_Evf_Mode, 0, sizeof(uint), ref mode);
 
-        uint dev = EvfOutputDevice_PC;
-        uint err = EdsSetPropertyData(_cam, PropID_Evf_OutputDevice, 0, sizeof(uint), ref dev);
+        uint err = ApplyEvfOutput();
         if (err != EDS_ERR_OK)
         {
             _log($"[WARN] Canon enable live view failed {Hex(err)}");
@@ -794,7 +836,7 @@ public sealed class CanonEdsdkCamera : ITetheredCamera
                 return EDS_ERR_OK;
             }
             // R50: ảnh được ghi vào thẻ rồi báo "file mới" thay vì yêu cầu truyền thẳng → tải từ thẻ về
-            if (inEvent == ObjectEvent_DirItemCreated && inRef != IntPtr.Zero && _pendingShot != null)
+            if (inEvent == ObjectEvent_DirItemCreated && inRef != IntPtr.Zero && (_pendingShot != null || _remoteDir != null))
             {
                 HandleTransfer(inRef, fromCard: true);
                 return EDS_ERR_OK;
@@ -814,6 +856,7 @@ public sealed class CanonEdsdkCamera : ITetheredCamera
         IntPtr stream = IntPtr.Zero;
         var tcs = _pendingShot;
         string? path = _pendingShotPath;
+        bool remote = false;
         try
         {
             uint err = EdsGetDirectoryItemInfo(item, out var info);
@@ -821,7 +864,23 @@ public sealed class CanonEdsdkCamera : ITetheredCamera
             bool isJpeg = name.EndsWith(".JPG", StringComparison.OrdinalIgnoreCase)
                 || name.EndsWith(".JPEG", StringComparison.OrdinalIgnoreCase);
 
-            if (tcs == null || path == null || !isJpeg || (err == EDS_ERR_OK && info.isFolder != 0))
+            bool isFolder = err == EDS_ERR_OK && info.isFolder != 0;
+            // Ảnh do nút / điều khiển từ xa của máy chụp (không có lệnh chụp của app đang chờ)
+            remote = (tcs == null || path == null) && _remoteDir != null && isJpeg && !isFolder;
+            if (remote)
+            {
+                // Máy có thẻ có thể báo cùng một file hai lần (yêu cầu truyền + file mới trên thẻ)
+                if (name == _lastRemoteName && DateTime.UtcNow - _lastRemoteAt < TimeSpan.FromSeconds(10))
+                {
+                    if (!fromCard) EdsDownloadCancel(item);
+                    return;
+                }
+                _lastRemoteName = name;
+                _lastRemoteAt = DateTime.UtcNow;
+                tcs = null;
+                path = Path.Combine(_remoteDir!, $"remote_{DateTime.Now:yyyyMMdd_HHmmss_fff}.jpg");
+            }
+            else if (tcs == null || path == null || !isJpeg || isFolder)
             {
                 // Không có lệnh chụp đang chờ (bấm nút trên máy), thư mục mới hoặc file RAW: bỏ qua
                 if (tcs != null && !isJpeg && info.isFolder == 0) _pendingShotSawNonJpeg = true;
@@ -844,12 +903,26 @@ public sealed class CanonEdsdkCamera : ITetheredCamera
             stream = IntPtr.Zero;
 
             File.Move(partPath, path, overwrite: true);
-            _log($"[INFO] Canon photo downloaded{(fromCard ? " from card" : "")}: {name} -> {path} ({info.size} bytes)");
+            _log($"[INFO] Canon {(remote ? "remote " : "")}photo downloaded{(fromCard ? " from card" : "")}: {name} -> {path} ({info.size} bytes)");
+            if (remote)
+            {
+                // Báo ra ngoài luồng EDSDK để người nghe chậm không chặn sự kiện của máy ảnh
+                string downloaded = path;
+                var handler = RemotePhotoDownloaded;
+                if (handler != null) ThreadPool.QueueUserWorkItem(_ => handler(this, downloaded));
+                return;
+            }
             ClearPendingShot();
-            tcs.TrySetResult(path);
+            tcs!.TrySetResult(path);
         }
         catch (Exception ex)
         {
+            if (remote)
+            {
+                // Ảnh do máy tự chụp lỗi: không đụng tới tấm do app chụp có thể đang chờ
+                _log($"[WARN] Canon remote photo download failed: {ex.Message}");
+                return;
+            }
             ClearPendingShot();
             tcs?.TrySetException(ex);
         }

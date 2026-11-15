@@ -199,7 +199,7 @@ public sealed class SessionUploadQueueTests : IDisposable
     }
 
     [Fact]
-    public async Task Gone_DeletesLocalSession()
+    public async Task Gone_StopsSendingButKeepsLocalFiles()
     {
         var queue = NewQueue();
         var m = NewSession();
@@ -207,24 +207,58 @@ public sealed class SessionUploadQueueTests : IDisposable
         _server.Fail = (req, _) => req.Path == "/api/kiosk/sessions" && req.Method == "POST" ? HttpStatusCode.Gone : null;
         await Drain(queue, 2);
 
-        Assert.All(m.LocalDirectories, d => Assert.False(Directory.Exists(d)));
+        Assert.All(m.LocalDirectories, d => Assert.True(Directory.Exists(d)));
         Assert.Equal(0, queue.GetStatus().PendingSessions);
+        Assert.Equal(1, _server.Requests.Count(r => r.Path == "/api/kiosk/sessions" && r.Method == "POST"));
     }
 
     [Fact]
-    public async Task Expiry_DeletesLocalDirectories_EvenIfNotUploaded()
+    public async Task Expiry_KeepsUnsentSession_UntilSevenDays()
     {
         var queue = NewQueue();
         var m = NewSession();
         _server.Fail = (_, _) => HttpStatusCode.ServiceUnavailable;
         queue.Enqueue(m);
         await Drain(queue, 2);
-        Assert.True(Directory.Exists(m.LocalDirectories[0]));
+
+        // Quá 24 giờ mà chưa gửi được: vẫn giữ file và manifest
+        _now += TimeSpan.FromHours(24) + TimeSpan.FromMinutes(1);
+        await Drain(queue, 1);
+        Assert.All(m.LocalDirectories, d => Assert.True(Directory.Exists(d)));
+        Assert.NotEmpty(Directory.GetFiles(Path.Combine(_root, "Outbox")));
+
+        // Quá 7 ngày: xoá cả file lẫn manifest
+        _now += TimeSpan.FromDays(7);
+        await Drain(queue, 1);
+        Assert.All(m.LocalDirectories, d => Assert.False(Directory.Exists(d)));
+        Assert.Empty(Directory.GetFiles(Path.Combine(_root, "Outbox")));
+    }
+
+    [Fact]
+    public async Task Expiry_DeletesSentSession_After24Hours()
+    {
+        var queue = NewQueue();
+        var m = NewSession();
+        queue.Enqueue(m);
+        await Drain(queue, 8);
+        Assert.Equal(1, queue.GetStatus().ReadySessions);
 
         _now += TimeSpan.FromHours(24) + TimeSpan.FromMinutes(1);
         await Drain(queue, 1);
         Assert.All(m.LocalDirectories, d => Assert.False(Directory.Exists(d)));
         Assert.Empty(Directory.GetFiles(Path.Combine(_root, "Outbox")));
+    }
+
+    [Fact]
+    public async Task ReferencesDirectory_TrueOnlyForQueuedSessions()
+    {
+        var queue = NewQueue();
+        var m = NewSession();
+        queue.Enqueue(m);
+        Assert.True(queue.ReferencesDirectory(m.LocalDirectories[0]));
+        Assert.True(queue.ReferencesDirectory(m.LocalDirectories[1] + Path.DirectorySeparatorChar));
+        Assert.False(queue.ReferencesDirectory(Path.Combine(_root, "Sessions", "SESSION_20260101_000000_zzzzzz")));
+        await Task.CompletedTask;
     }
 
     [Fact]

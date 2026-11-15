@@ -12,7 +12,7 @@ namespace PhotoBooth.Hardware.Camera;
 /// máy nào đang kết nối thì dùng máy đó (theo thứ tự ưu tiên truyền vào).
 /// Khi đã có một máy, các driver còn lại ngừng dò USB để hai SDK không tranh nhau thiết bị.
 /// </summary>
-public sealed class CameraManager : ITetheredCamera
+public sealed class CameraManager : ITetheredCamera, IRemoteShutterSource
 {
     private readonly IReadOnlyList<ITetheredCamera> _cameras;
     private readonly Action<string> _log;
@@ -24,6 +24,7 @@ public sealed class CameraManager : ITetheredCamera
     public event EventHandler<FrameLeaseEventArgs>? FrameArrived;
     public event EventHandler<CameraStatusChangedEventArgs>? StatusChanged;
     public event EventHandler<CameraInfo>? InfoChanged;
+    public event EventHandler<string>? RemotePhotoDownloaded;
 
     public CameraManager(Action<string>? log, params ITetheredCamera[] cameras)
     {
@@ -36,8 +37,16 @@ public sealed class CameraManager : ITetheredCamera
                 if (ReferenceEquals(sender, Volatile.Read(ref _active))) FrameArrived?.Invoke(this, e);
             };
             camera.InfoChanged += (_, _) => Recompute();
+            if (camera is IRemoteShutterSource remote)
+            {
+                remote.RemotePhotoDownloaded += (sender, path) => RemotePhotoDownloaded?.Invoke(this, path);
+            }
         }
     }
+
+    /// <summary>Bật / tắt nhận ảnh do máy tự chụp trên mọi driver hỗ trợ (máy nào cắm thì máy đó gửi ảnh về).</summary>
+    public Task SetRemoteShutterAsync(string? destinationDirectory) =>
+        Task.WhenAll(_cameras.OfType<IRemoteShutterSource>().Select(c => c.SetRemoteShutterAsync(destinationDirectory)));
 
     public IReadOnlyList<ITetheredCamera> Cameras => _cameras;
 

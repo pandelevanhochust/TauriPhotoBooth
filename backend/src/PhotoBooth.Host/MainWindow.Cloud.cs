@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using PhotoBooth.Core.Cloud;
+using PhotoBooth.Core.Storage;
 using PhotoBooth.Imaging;
 
 namespace PhotoBooth.Host;
@@ -66,6 +67,44 @@ public partial class MainWindow
 
         var s = CloudSettingsSnapshot();
         App.Log($"[INFO] Cloud upload: {(s.IsConfigured ? "bật" : s.Enabled ? "chưa cấu hình khoá API" : "tắt")}, server {s.BaseUrl}, thiết bị {s.EffectiveDeviceId}, link QR {s.ShareBaseUrl}");
+    }
+
+    private System.Threading.Timer? _storageCleanupTimer;
+
+    /// <summary>
+    /// Dọn file cũ quá 7 ngày (phiên chụp, gallery, ảnh kiểm tra máy ảnh, khung video bị bỏ lại, log cũ): sau khi mở app 2 phút,
+    /// rồi mỗi 6 giờ. Phiên còn trong hàng đợi gửi do hàng đợi tự xoá. Không chạy khi khách đang chụp.
+    /// </summary>
+    private void StartStorageCleaner(string baseDataDir)
+    {
+        var cleaner = new StorageCleaner(
+            Path.Combine(baseDataDir, "Sessions"),
+            new[] { GetLocalGalleryRootDir(), Path.Combine(baseDataDir, "CameraTest") },
+            baseDataDir,
+            "host_startup",
+            log: App.Log);
+
+        void RunOnce()
+        {
+            if (IsCaptureBusy()) return;
+            var thread = Thread.CurrentThread;
+            var old = thread.Priority;
+            try
+            {
+                thread.Priority = ThreadPriority.BelowNormal;
+                cleaner.Run(dir => _uploadQueue?.ReferencesDirectory(dir) == true);
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[WARN] Dọn bộ nhớ thất bại: {ex.Message}");
+            }
+            finally
+            {
+                thread.Priority = old;
+            }
+        }
+
+        _storageCleanupTimer = new System.Threading.Timer(_ => RunOnce(), null, TimeSpan.FromMinutes(2), TimeSpan.FromHours(6));
     }
 
     private bool IsCaptureBusy()
@@ -129,7 +168,7 @@ public partial class MainWindow
         try
         {
             string printPath = Path.Combine(Path.GetDirectoryName(compositePath)!, "composite_print.jpg");
-            QrCodeRenderer.StampOnImage(compositePath, printPath, shareUrl, qx.Value, qy.Value, qs.Value, caption: null);
+            QrCodeRenderer.StampOnImage(compositePath, printPath, shareUrl, qx.Value, qy.Value, qs.Value);
             return printPath;
         }
         catch (Exception ex)

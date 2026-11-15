@@ -27,6 +27,11 @@ public partial class MainWindow : Window
 {
     private KeyboardHook? _keyboardHook;
     private CameraManager? _camera;
+    // Số thứ tự tấm lớn nhất đã dùng trong phiên: ảnh do điều khiển từ xa chụp lấy số kế tiếp
+    private readonly object _shotIndexLock = new();
+    private int _maxShotIndex;
+    // Đang ở chế độ chụp bằng điều khiển từ xa: ảnh do máy tự chụp thuộc phiên này
+    private volatile bool _remoteShutterActive;
 
     /// <summary>Video đầy đủ của bước chụp: 15 khung/giây, mỗi khung đặt đúng thời điểm thật (không tua nhanh).</summary>
     private const int TimelapseFps = 15;
@@ -142,19 +147,28 @@ public partial class MainWindow : Window
 
             // Hàng đợi gửi phiên chụp lên backend (đọc lại các phiên chưa gửi xong từ lần chạy trước)
             InitializeCloudUpload(baseDataDir);
+            StartStorageCleaner(baseDataDir);
 
-            // Prefetch CMS frames & presets in background so they are ready instantly for UI
+            // Lấy sẵn danh sách từ CMS ngay lúc khởi động để UI có ngay. Layout (kích cỡ ảnh) rất hiếm khi đổi nên chỉ lấy
+            // một lần ở đây rồi dùng suốt lần chạy; frame và bộ lọc được hỏi lại server mỗi lần khách vào bước chọn.
             _ = Task.Run(async () =>
             {
-                try
+                foreach (var (name, fetch) in new (string, Func<Task<string>>)[]
                 {
-                    await GetOrFetchFramesJsonAsync();
-                    await GetOrFetchPresetsJsonAsync();
-                    App.Log("[INFO] CMS Frames and Presets prefetch completed.");
-                }
-                catch (Exception ex)
+                    ("layouts", GetOrFetchLayoutsJsonAsync),
+                    ("frames", () => GetOrFetchFramesJsonAsync()),
+                    ("presets", () => GetOrFetchPresetsJsonAsync()),
+                })
                 {
-                    App.Log($"[WARN] CMS prefetch background error: {ex.Message}");
+                    try
+                    {
+                        await fetch();
+                        App.Log($"[INFO] CMS {name} prefetch completed.");
+                    }
+                    catch (Exception ex)
+                    {
+                        App.Log($"[WARN] CMS {name} prefetch error: {ex.Message}");
+                    }
                 }
             });
 
@@ -177,6 +191,7 @@ public partial class MainWindow : Window
             // Canon (EDSDK) ưu tiên trước, rồi Fujifilm (X SDK); máy nào đang cắm thì dùng máy đó
             _camera = new CameraManager(App.Log, new CanonEdsdkCamera(App.Log), new FujifilmXsdkCamera(App.Log));
             _camera.FrameArrived += OnCameraFrameArrived;
+            _camera.RemotePhotoDownloaded += OnRemotePhotoDownloaded;
             _camera.InfoChanged += (_, info) => PostEventToWeb("camera_status_changed", ToCameraStatusDto(info));
             var camInit = await _camera.InitializeAsync();
             App.Log($"[INFO] Step 3.1: Camera init: {(camInit.IsSuccess ? "connected" : camInit.UserMessage)}");
@@ -218,6 +233,16 @@ public partial class MainWindow : Window
         MainWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
         MainWebView.CoreWebView2.Settings.AreDevToolsEnabled = true; // Enabled for diagnostics
         MainWebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
+        // Kiosk: khoá phóng to bằng chụm 2 ngón (màn cảm ứng, touchpad) và vuốt 2 ngón để lùi / tiến trang.
+        // Các bước tự xử lý cử chỉ (chỉnh ảnh ở bước chọn ảnh) vẫn nhận sự kiện chạm / lăn như thường.
+        MainWebView.CoreWebView2.Settings.IsPinchZoomEnabled = false;
+        MainWebView.CoreWebView2.Settings.IsSwipeNavigationEnabled = false;
+        // Phòng khi mức phóng bị đổi bằng cách khác: luôn đưa về 100%
+        MainWebView.ZoomFactor = 1.0;
+        MainWebView.ZoomFactorChanged += (_, _) =>
+        {
+            if (Math.Abs(MainWebView.ZoomFactor - 1.0) > 0.001) MainWebView.ZoomFactor = 1.0;
+        };
 
         MainWebView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
         MainWebView.CoreWebView2.NavigationCompleted += (s, args) =>
@@ -531,7 +556,7 @@ public partial class MainWindow : Window
     /// Chờ ảnh của một tấm đã nhả màn trập tải về xong, lưu thành shot_{n}.jpg, tạo bản xem trước
     /// rồi báo UI bằng sự kiện shot_ready (hoặc shot_failed). Chạy nền, không chặn tấm kế tiếp.
     /// </summary>
-    private async Task FinishDslrShotAsync(int shotIndex, string sessionDir, string galleryDir, Task<CapturePhotoResult> download)
+    private async Task FinishDslrShotAsync(int shotIndex, string sessionDir, string galleryDir, Task<CapturePhotoResult> download, string readyEvent = "shot_ready")
     {
         try
         {
@@ -557,14 +582,43 @@ public partial class MainWindow : Window
             });
 
             if (sessionDir == _currentSessionDir && !_capturedRawPhotos.Contains(target)) _capturedRawPhotos.Add(target);
-            App.Log($"[INFO] Captured shot #{shotIndex} from DSLR: {target}");
-            PostEventToWeb("shot_ready", new { shotIndex, filePath = target, base64 = Convert.ToBase64String(preview) });
+            App.Log($"[INFO] Captured shot #{shotIndex} from DSLR{(readyEvent == "remote_shot" ? " (remote)" : "")}: {target}");
+            PostEventToWeb(readyEvent, new { shotIndex, filePath = target, base64 = Convert.ToBase64String(preview) });
         }
         catch (Exception ex)
         {
             App.Log($"[ERROR] DSLR shot #{shotIndex}: {ex}");
             PostEventToWeb("shot_failed", new { shotIndex, message = "Không lưu được ảnh vừa chụp" });
         }
+    }
+
+    private int NextShotIndex()
+    {
+        lock (_shotIndexLock) return ++_maxShotIndex;
+    }
+
+    private void NoteShotIndex(int shotIndex)
+    {
+        lock (_shotIndexLock) _maxShotIndex = Math.Max(_maxShotIndex, shotIndex);
+    }
+
+    /// <summary>
+    /// Ảnh do nút chụp / điều khiển từ xa của máy chụp (chế độ chụp bằng điều khiển từ xa): lưu thành shot_{n}.jpg
+    /// với số kế tiếp của phiên rồi báo UI bằng sự kiện remote_shot. Ngoài chế độ đó thì bỏ file đi.
+    /// </summary>
+    private void OnRemotePhotoDownloaded(object? sender, string path)
+    {
+        string sessionDir = _currentSessionDir;
+        if (!_remoteShutterActive || string.IsNullOrEmpty(sessionDir)
+            || !string.Equals(Path.GetDirectoryName(path), sessionDir, StringComparison.OrdinalIgnoreCase))
+        {
+            App.Log($"[INFO] Remote photo ignored (không ở bước chụp bằng điều khiển từ xa): {path}");
+            try { File.Delete(path); } catch { }
+            return;
+        }
+        int shotIndex = NextShotIndex();
+        var result = new CapturePhotoResult { IsSuccess = true, Code = ErrorCode.None, RawImagePath = path };
+        _ = FinishDslrShotAsync(shotIndex, sessionDir, _localGalleryDir, Task.FromResult(result), "remote_shot");
     }
 
     /// <summary>Chụp bằng máy ảnh rồi đổi tên thành <paramref name="fileName"/> trong <paramref name="dir"/>.</summary>
@@ -647,7 +701,8 @@ public partial class MainWindow : Window
                 case "get_frames":
                     try
                     {
-                        string framesJson = await GetOrFetchFramesJsonAsync();
+                        // Trả ngay bản đã lưu, hỏi server ngầm; có thay đổi thì báo UI (sự kiện cms_updated)
+                        string framesJson = await GetCmsJsonForStepAsync("frames", FramesCmsUrl);
                         SendRawSuccessResponse(id, framesJson);
                     }
                     catch (Exception ex)
@@ -660,7 +715,8 @@ public partial class MainWindow : Window
                 case "get_presets":
                     try
                     {
-                        string presetsJson = await GetOrFetchPresetsJsonAsync();
+                        // Trả ngay bản đã lưu, hỏi server ngầm; có thay đổi thì báo UI (sự kiện cms_updated)
+                        string presetsJson = await GetCmsJsonForStepAsync("presets", PresetsCmsUrl);
                         SendRawSuccessResponse(id, presetsJson);
                     }
                     catch (Exception ex)
@@ -711,6 +767,19 @@ public partial class MainWindow : Window
                     {
                         new { id = "hd_webcam", name = "HD Webcam", isDefault = true }
                     });
+                    break;
+
+                case "remote_capture":
+                    {
+                        // Chế độ chụp bằng điều khiển từ xa: nhận ảnh do nút / remote của máy ảnh chụp
+                        bool remoteOn = payload.ValueKind == JsonValueKind.Object
+                            && payload.TryGetProperty("active", out var rcEl) && rcEl.ValueKind == JsonValueKind.True
+                            && !string.IsNullOrEmpty(_currentSessionDir);
+                        _remoteShutterActive = remoteOn;
+                        if (_camera != null) await _camera.SetRemoteShutterAsync(remoteOn ? _currentSessionDir : null);
+                        App.Log($"[INFO] Remote capture {(remoteOn ? "ON" : "OFF")}");
+                        SendSuccessResponse(id, new { active = remoteOn });
+                    }
                     break;
 
                 case "capture_step":
@@ -896,6 +965,7 @@ public partial class MainWindow : Window
                     if (!Directory.Exists(_localGalleryDir)) Directory.CreateDirectory(_localGalleryDir);
 
                     _capturedRawPhotos.Clear();
+                    lock (_shotIndexLock) _maxShotIndex = 0;
                     StopTimelapse();
                     BeginCloudSession();
                     App.Log($"[INFO] Session started: {_currentSessionId} (cloud {_cloudSessionId}), local gallery: {_localGalleryDir}");
@@ -905,6 +975,7 @@ public partial class MainWindow : Window
 
                 case "capture_shot":
                     int shotIndex = payload.TryGetProperty("shotIndex", out var shotEl) ? shotEl.GetInt32() : _capturedRawPhotos.Count + 1;
+                    NoteShotIndex(shotIndex);
                     if (string.IsNullOrEmpty(_currentSessionDir))
                     {
                         _currentSessionDir = Path.Combine(Path.GetTempPath(), "HihiBooth_Temp");
@@ -1259,6 +1330,61 @@ public partial class MainWindow : Window
                     }
                     break;
 
+                case "print_pick_image":
+                    {
+                        // Admin chọn một ảnh có sẵn trên máy; khổ in (2x6 cắt đôi / 4x6) tự nhận theo kích thước ảnh
+                        var dialog = new Microsoft.Win32.OpenFileDialog
+                        {
+                            Title = "Chọn ảnh để in thử",
+                            Filter = "Ảnh (*.jpg;*.jpeg;*.png)|*.jpg;*.jpeg;*.png",
+                            CheckFileExists = true,
+                        };
+                        if (dialog.ShowDialog(this) != true)
+                        {
+                            SendSuccessResponse(id, new { cancelled = true });
+                            break;
+                        }
+
+                        string pickedPath = dialog.FileName;
+                        int pickedW, pickedH;
+                        try
+                        {
+                            using var pickedImage = System.Drawing.Image.FromFile(pickedPath);
+                            pickedW = pickedImage.Width;
+                            pickedH = pickedImage.Height;
+                        }
+                        catch (Exception ex)
+                        {
+                            App.Log($"[WARN] print_pick_image: cannot read {pickedPath}: {ex.Message}");
+                            SendErrorResponse(id, "Không đọc được file ảnh đã chọn.");
+                            break;
+                        }
+
+                        var pickedPaper = WindowsPrinterService.DetectPaperType(pickedW, pickedH);
+                        string pickedKind = pickedPaper == PaperType.DoubleStrip2x6 ? "2x6" : "4x6";
+                        App.Log($"[INFO] Print picked image {pickedPath} ({pickedW}x{pickedH}) as {pickedKind}");
+                        var pickedRes = await _printerService.PrintLayoutAsync(new PrintJobRequest { ImagePath = pickedPath, Copies = 1, PaperType = pickedPaper });
+                        if (pickedRes.IsSuccess)
+                        {
+                            SendSuccessResponse(id, new
+                            {
+                                success = true,
+                                message = pickedRes.UserMessage,
+                                fileName = Path.GetFileName(pickedPath),
+                                width = pickedW,
+                                height = pickedH,
+                                kind = pickedKind,
+                                sheets = pickedRes.SheetsPrinted,
+                                remainingPaper = _paperCounter.RemainingSheets,
+                            });
+                        }
+                        else
+                        {
+                            SendErrorResponse(id, pickedRes.UserMessage);
+                        }
+                    }
+                    break;
+
                 case "print_test_page":
                     {
                         string testPagePath = Path.Combine(Path.GetTempPath(), "HihiBooth_Temp", "print_test_page.jpg");
@@ -1287,6 +1413,8 @@ public partial class MainWindow : Window
     }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _cmsJsonCache = new();
+    /// <summary>Danh sách nào trong <see cref="_cmsJsonCache"/> đã lấy được từ server (không chỉ từ file dự phòng trên đĩa).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _cmsFromServer = new();
     private const string CmsBaseUrl = "http://129.221.221.113:8080";
 
     /// <summary>
@@ -1364,9 +1492,15 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task<string> GetOrFetchCmsJsonAsync(string key, string relativeUrl)
+    /// <summary>
+    /// Lấy danh sách từ CMS. <paramref name="refresh"/> = true (khách vào bước chọn frame / bộ lọc): luôn hỏi server để mục mới
+    /// hiện ngay; server không trả lời kịp thì dùng bản đã lưu (bộ nhớ, rồi file trên đĩa) để màn hình không bị chờ lâu khi mất mạng.
+    /// </summary>
+    private async Task<string> GetOrFetchCmsJsonAsync(string key, string relativeUrl, bool refresh = false)
     {
-        if (_cmsJsonCache.TryGetValue(key, out var cached) && !string.IsNullOrEmpty(cached)) return cached;
+        bool hasCache = _cmsJsonCache.TryGetValue(key, out var cached) && !string.IsNullOrEmpty(cached);
+        // Đã lấy được từ server một lần thì dùng suốt lần chạy; mới chỉ có bản dự phòng (mở app lúc chưa có mạng) thì thử lại server
+        if (hasCache && !refresh && _cmsFromServer.ContainsKey(key)) return cached!;
 
         string cacheFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data", $"cached_{key}.json");
         string? fromDisk = null;
@@ -1377,11 +1511,13 @@ public partial class MainWindow : Window
 
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            // Đã có bản lưu thì chỉ chờ server ngắn thôi; chưa có gì thì chờ lâu hơn
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(hasCache || fromDisk != null ? 3 : 5) };
             string fetched = await http.GetStringAsync(CmsBaseUrl + relativeUrl);
             if (!string.IsNullOrWhiteSpace(fetched) && fetched.TrimStart().StartsWith("["))
             {
                 _cmsJsonCache[key] = fetched;
+                _cmsFromServer[key] = true;
                 _ = Task.Run(async () =>
                 {
                     try
@@ -1400,6 +1536,7 @@ public partial class MainWindow : Window
             App.Log($"[WARN] Fetch {key} from CMS failed: {ex.Message}");
         }
 
+        if (hasCache) return cached!;
         if (!string.IsNullOrEmpty(fromDisk))
         {
             _cmsJsonCache[key] = fromDisk;
@@ -1408,8 +1545,61 @@ public partial class MainWindow : Window
         throw new InvalidOperationException($"Could not fetch {key} and no cache available.");
     }
 
-    private Task<string> GetOrFetchFramesJsonAsync() => GetOrFetchCmsJsonAsync("frames", "/api/frames?onlyActive=true");
-    private Task<string> GetOrFetchPresetsJsonAsync() => GetOrFetchCmsJsonAsync("presets", "/api/presets?onlyActive=true");
+    private const string FramesCmsUrl = "/api/frames?onlyActive=true";
+    private const string PresetsCmsUrl = "/api/presets?onlyActive=true";
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _cmsRefreshing = new();
+
+    private Task<string> GetOrFetchFramesJsonAsync(bool refresh = false) => GetOrFetchCmsJsonAsync("frames", FramesCmsUrl, refresh);
+    private Task<string> GetOrFetchPresetsJsonAsync(bool refresh = false) => GetOrFetchCmsJsonAsync("presets", PresetsCmsUrl, refresh);
+
+    /// <summary>
+    /// Khách vào bước chọn frame / bộ lọc: trả ngay bản đã lưu (bộ nhớ, rồi file trên đĩa) để danh sách hiện tức thì,
+    /// đồng thời hỏi server ngầm; bản mới khác bản đã trả thì gửi sự kiện <c>cms_updated</c> để UI tải lại.
+    /// Chưa có bản lưu nào (lần chạy đầu, chưa có mạng lúc khởi động) thì chờ server như bình thường.
+    /// </summary>
+    private async Task<string> GetCmsJsonForStepAsync(string key, string relativeUrl)
+    {
+        string? cached = _cmsJsonCache.TryGetValue(key, out var mem) && !string.IsNullOrEmpty(mem) ? mem : null;
+        if (cached == null)
+        {
+            string cacheFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data", $"cached_{key}.json");
+            try
+            {
+                if (File.Exists(cacheFile)) cached = await File.ReadAllTextAsync(cacheFile);
+            }
+            catch { }
+            if (string.IsNullOrWhiteSpace(cached)) cached = null;
+            else _cmsJsonCache.TryAdd(key, cached!);
+        }
+
+        if (cached == null) return await GetOrFetchCmsJsonAsync(key, relativeUrl, refresh: true);
+
+        _ = RefreshCmsInBackgroundAsync(key, relativeUrl, cached);
+        return cached;
+    }
+
+    private async Task RefreshCmsInBackgroundAsync(string key, string relativeUrl, string shown)
+    {
+        // Đang hỏi rồi (khách quay lại bước liên tục) thì thôi
+        if (!_cmsRefreshing.TryAdd(key, true)) return;
+        try
+        {
+            string latest = await GetOrFetchCmsJsonAsync(key, relativeUrl, refresh: true);
+            if (!string.Equals(latest, shown, StringComparison.Ordinal))
+            {
+                App.Log($"[INFO] CMS {key} changed on server, notifying UI");
+                PostEventToWeb("cms_updated", new { key });
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WARN] CMS {key} background refresh failed: {ex.Message}");
+        }
+        finally
+        {
+            _cmsRefreshing.TryRemove(key, out _);
+        }
+    }
     private Task<string> GetOrFetchLayoutsJsonAsync() => GetOrFetchCmsJsonAsync("layouts", "/api/layouts?onlyActive=false");
 
     private void SendRawSuccessResponse(string id, string rawJsonData)
@@ -1497,6 +1687,7 @@ public partial class MainWindow : Window
     private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         _heartbeatTimer?.Dispose();
+        _storageCleanupTimer?.Dispose();
         _keyboardHook?.Dispose();
         StopTimelapse();
         _uploadQueue?.Dispose();

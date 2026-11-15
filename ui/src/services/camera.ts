@@ -75,6 +75,21 @@ export const cameraApi = {
     });
   },
 
+  /**
+   * Chế độ chụp bằng điều khiển từ xa: bật thì host nhận ảnh do nút chụp / điều khiển từ xa của máy ảnh chụp
+   * (máy để màn hình sau hiện live view và mở khoá nút). Tắt khi rời bước chụp.
+   */
+  setRemoteShutter(active: boolean): Promise<unknown> {
+    return ipc.invoke('remote_capture', { active }).catch(() => undefined);
+  },
+
+  /** Ảnh do nút / điều khiển từ xa của máy ảnh vừa chụp và tải về xong (số tấm do host cấp). Trả về hàm huỷ. */
+  onRemoteShot(cb: (shot: ShotReady) => void): () => void {
+    return ipc.listen('remote_shot', (data: ShotReady) => {
+      if (data && typeof data.shotIndex === 'number') cb(data);
+    });
+  },
+
   /** Một tấm đã chụp nhưng không tải được ảnh về. Trả về hàm huỷ. */
   onShotFailed(cb: (shot: ShotFailed) => void): () => void {
     return ipc.listen('shot_failed', (data: ShotFailed) => {
