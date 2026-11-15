@@ -34,9 +34,16 @@ public partial class MainWindow : Window
     private TimelapseRecorder? _timelapse;
     /// <summary>Timelapse tua nhanh ghi song song với video đầy đủ, từ cùng các khung hình.</summary>
     private TimelapseRecorder? _timelapseFast;
+    /// <summary>
+    /// Bộ ghi kiểu FavoriCurrent (ghi khung JPEG, chụp xong chạy ffmpeg). Dùng khi máy có ffmpeg;
+    /// không có thì ghi bằng hai TimelapseRecorder ở trên (Media Foundation).
+    /// </summary>
+    private FfmpegSessionRecorder? _ffmpegRecorder;
+    private bool IsRecordingSessionVideo => Volatile.Read(ref _timelapse) != null || Volatile.Read(ref _ffmpegRecorder) != null;
     private const int TimelapseFastSpeed = 8;
     private const string SessionVideoFile = "timelapse.mp4";
     private const string FastTimelapseFile = "timelapse_fast.mp4";
+    private const string SessionFramesDir = "video_frames";
     private long _lastTimelapseFrameTicks;
     private IPaperCounter _paperCounter = null!;
     private WindowsPrinterService _printerService = null!;
@@ -52,6 +59,8 @@ public partial class MainWindow : Window
     private string _kioskMode = "FreeEvent";
     private readonly List<string> _capturedRawPhotos = new();
     private string _lastCompositePath = "";
+    /// <summary>Khổ in của ảnh ghép gần nhất: layout dải (1x4) là hai dải trên một tờ 4x6, máy in phải cắt đôi.</summary>
+    private PaperType _lastCompositePaper = PaperType.Card4x6;
 
     private static string GetLocalGalleryRootDir()
     {
@@ -336,12 +345,18 @@ public partial class MainWindow : Window
     /// <summary>Lấy mẫu khung cho timelapse (tối đa 1 khung / TimelapseSampleMs).</summary>
     private void AddTimelapseFrame(ReadOnlySpan<byte> jpeg, long nowTicks)
     {
+        var ffmpegRecorder = Volatile.Read(ref _ffmpegRecorder);
         var recorder = Volatile.Read(ref _timelapse);
-        if (recorder == null || jpeg.IsEmpty) return;
+        if ((ffmpegRecorder == null && recorder == null) || jpeg.IsEmpty) return;
         if (nowTicks - Interlocked.Read(ref _lastTimelapseFrameTicks) < TimelapseSampleMs) return;
         Interlocked.Exchange(ref _lastTimelapseFrameTicks, nowTicks);
         byte[] frame = jpeg.ToArray();
-        recorder.AddFrame(frame, nowTicks);
+        if (ffmpegRecorder != null)
+        {
+            ffmpegRecorder.AddFrame(frame, nowTicks);
+            return;
+        }
+        recorder!.AddFrame(frame, nowTicks);
         Volatile.Read(ref _timelapseFast)?.AddFrame(frame, nowTicks);
     }
 
@@ -351,9 +366,11 @@ public partial class MainWindow : Window
     /// </summary>
     private void StopTimelapse()
     {
+        var ffmpegRecorder = Interlocked.Exchange(ref _ffmpegRecorder, null);
         var full = Interlocked.Exchange(ref _timelapse, null);
         var fast = Interlocked.Exchange(ref _timelapseFast, null);
-        if (full == null && fast == null) return;
+        if (ffmpegRecorder == null && full == null && fast == null) return;
+        string sessionDir = _currentSessionDir;
         string galleryDir = _localGalleryDir;
         Guid cloudSessionId = _cloudSessionId;
         string sessionDirName = Path.GetFileName(_currentSessionDir);
@@ -363,10 +380,20 @@ public partial class MainWindow : Window
             string? video = null, fastVideo = null;
             try
             {
-                var fullTask = full?.FinishAsync() ?? Task.FromResult<string?>(null);
-                var fastTask = fast?.FinishAsync() ?? Task.FromResult<string?>(null);
-                video = await fullTask;
-                fastVideo = await fastTask;
+                if (ffmpegRecorder != null)
+                {
+                    var result = await ffmpegRecorder.FinishAsync(
+                        Path.Combine(sessionDir, SessionVideoFile), Path.Combine(sessionDir, FastTimelapseFile), TimelapseFastSpeed);
+                    video = result.FullVideo;
+                    fastVideo = result.FastVideo;
+                }
+                else
+                {
+                    var fullTask = full?.FinishAsync() ?? Task.FromResult<string?>(null);
+                    var fastTask = fast?.FinishAsync() ?? Task.FromResult<string?>(null);
+                    video = await fullTask;
+                    fastVideo = await fastTask;
+                }
                 // Gắn video vào hàng đợi trước khi bỏ cờ, để màn hình cuối không thấy phiên "xong" mà thiếu video
                 if (video != null) AttachTimelapseToCloud(cloudSessionId, video, 0);
                 if (fastVideo != null) AttachTimelapseToCloud(cloudSessionId, fastVideo, 1);
@@ -430,6 +457,16 @@ public partial class MainWindow : Window
             usbWithoutDriver = overview.UsbWithoutDriver,
             paperCount = _paperCounter.RemainingSheets,
             paperSizes,
+            calibration = new
+            {
+                scalePercent = _printerService.Calibration.ScalePercent,
+                offsetX = _printerService.Calibration.OffsetX,
+                offsetY = _printerService.Calibration.OffsetY,
+                stripScalePercent = _printerService.Calibration.StripScalePercent,
+                stripOffsetX = _printerService.Calibration.StripOffsetX,
+                stripOffsetY = _printerService.Calibration.StripOffsetY,
+                stripGapMm = _printerService.Calibration.StripGapMm,
+            },
             printers = overview.Printers.Select(q => new
             {
                 name = q.Name,
@@ -711,15 +748,26 @@ public partial class MainWindow : Window
                     }
                     try
                     {
-                        Volatile.Write(ref _timelapse, new TimelapseRecorder(Path.Combine(_currentSessionDir, SessionVideoFile), TimelapseFps, 1280, App.Log));
-                        try
+                        string? ffmpegPath = FfmpegLocator.Find();
+                        if (ffmpegPath != null)
                         {
-                            Volatile.Write(ref _timelapseFast, new TimelapseRecorder(Path.Combine(_currentSessionDir, FastTimelapseFile), TimelapseFps, 1280, App.Log, TimelapseFastSpeed));
+                            // Như FavoriCurrent: lúc chụp chỉ ghi khung JPEG, chụp xong ffmpeg mới dựng video
+                            Volatile.Write(ref _ffmpegRecorder, new FfmpegSessionRecorder(
+                                ffmpegPath, Path.Combine(_currentSessionDir, SessionFramesDir), TimelapseFps, 1280, App.Log));
                         }
-                        catch (Exception fastEx)
+                        else
                         {
-                            // Thiếu timelapse tua nhanh không chặn video đầy đủ
-                            App.Log($"[WARN] timelapse_start (tua nhanh): {fastEx.Message}");
+                            App.Log($"[WARN] Không tìm thấy ffmpeg.exe (đặt cạnh app, C:\\ffmpeg\\bin, PATH hoặc biến {FfmpegLocator.EnvVar}): ghi video bằng Media Foundation");
+                            Volatile.Write(ref _timelapse, new TimelapseRecorder(Path.Combine(_currentSessionDir, SessionVideoFile), TimelapseFps, 1280, App.Log));
+                            try
+                            {
+                                Volatile.Write(ref _timelapseFast, new TimelapseRecorder(Path.Combine(_currentSessionDir, FastTimelapseFile), TimelapseFps, 1280, App.Log, TimelapseFastSpeed));
+                            }
+                            catch (Exception fastEx)
+                            {
+                                // Thiếu timelapse tua nhanh không chặn video đầy đủ
+                                App.Log($"[WARN] timelapse_start (tua nhanh): {fastEx.Message}");
+                            }
                         }
                         Interlocked.Exchange(ref _lastTimelapseFrameTicks, 0);
                         SendSuccessResponse(id, new { recording = true });
@@ -1087,6 +1135,7 @@ public partial class MainWindow : Window
                     string compositeOut = Path.Combine(_currentSessionDir, "composite_final.jpg");
                     await _skiaCompositor.ComposePrintSheetAsync(template, composePhotos, compositeOut);
                     _lastCompositePath = compositeOut;
+                    _lastCompositePaper = IsStripLayout(layoutType) ? PaperType.DoubleStrip2x6 : PaperType.Card4x6;
 
                     // Link tải ảnh dựng ngay trên máy (không chờ mạng); frame có vị trí QR thì in QR lên bản in
                     bool cloudActive = CloudActive;
@@ -1160,7 +1209,7 @@ public partial class MainWindow : Window
                             && payload.TryGetProperty("copies", out var copiesEl) && copiesEl.ValueKind == JsonValueKind.Number
                             ? Math.Clamp(copiesEl.GetInt32(), 1, 20)
                             : 1;
-                        var pRes = await _printerService.PrintLayoutAsync(new PrintJobRequest { ImagePath = _lastCompositePath, Copies = printCopies });
+                        var pRes = await _printerService.PrintLayoutAsync(new PrintJobRequest { ImagePath = _lastCompositePath, Copies = printCopies, PaperType = _lastCompositePaper });
                         SendSuccessResponse(id, new
                         {
                             success = pRes.IsSuccess,
@@ -1186,6 +1235,26 @@ public partial class MainWindow : Window
                             : null;
                         _printerService.SelectPrinter(selectName);
                         App.Log($"[INFO] Printer selected: \"{selectName}\"");
+                        SendSuccessResponse(id, await BuildPrinterStatusDtoAsync());
+                    }
+                    break;
+
+                case "printer_calibrate":
+                    {
+                        var current = _printerService.Calibration;
+                        double Value(string key, double fallback) =>
+                            payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number
+                                ? v.GetDouble()
+                                : fallback;
+                        _printerService.SetCalibration(new PrintCalibration(
+                            Value("scalePercent", current.ScalePercent),
+                            Value("offsetX", current.OffsetX),
+                            Value("offsetY", current.OffsetY),
+                            Value("stripScalePercent", current.StripScalePercent),
+                            Value("stripOffsetX", current.StripOffsetX),
+                            Value("stripOffsetY", current.StripOffsetY),
+                            Value("stripGapMm", current.StripGapMm)));
+                        App.Log($"[INFO] Print calibration: {_printerService.Calibration}");
                         SendSuccessResponse(id, await BuildPrinterStatusDtoAsync());
                     }
                     break;
@@ -1225,6 +1294,12 @@ public partial class MainWindow : Window
     /// (cached_{key}.json) để kiosk vẫn chạy khi mất mạng.
     /// </summary>
     /// <summary>Đọc mảng "holes" ({x, y, w, h}) trong payload; toạ độ có thể là số thực.</summary>
+    /// <summary>Layout dải ảnh (CMS "1x4", luồng cũ "strip2x6"): in hai dải trên tờ 4x6 rồi cắt đôi.</summary>
+    private static bool IsStripLayout(string layoutType) =>
+        layoutType.Equals("strip2x6", StringComparison.OrdinalIgnoreCase)
+        || layoutType.Equals("1x4", StringComparison.OrdinalIgnoreCase)
+        || layoutType.Contains("strip", StringComparison.OrdinalIgnoreCase);
+
     private static List<HoleLocation> ParseHoles(JsonElement payload)
     {
         var holes = new List<HoleLocation>();

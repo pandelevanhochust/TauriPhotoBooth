@@ -30,6 +30,26 @@ public sealed record PrinterQueueInfo(
     string StatusText,
     int JobCount);
 
+/// <summary>
+/// Căn chỉnh bản in, cùng cách tính với app FavoriCurrent đang chạy thật để dùng lại được số của nó:
+/// ảnh có kích thước danh nghĩa 4 x 6 inch (không phải cả trang tràn lề 4.13 x 6.15 của DNP), nhân tỉ lệ,
+/// đặt giữa trang rồi dịch theo Offset. Offset tính bằng 1/100 inch; X dương = sang phải, Y dương = xuống dưới.
+/// Mặc định là số FavoriCurrent đang dùng cho khổ dọc trên DS-RX1.
+/// </summary>
+/// <param name="ScalePercent">Tỉ lệ ảnh 4x6, %.</param>
+/// <param name="StripScalePercent">Tỉ lệ tờ dải 2x6 (cả hai dải), %.</param>
+/// <param name="StripGapMm">Khoảng hở thêm giữa hai dải ở đường cắt, mm (FavoriCurrent không có: 0).</param>
+public sealed record PrintCalibration(
+    double ScalePercent = 101, double OffsetX = -3, double OffsetY = -4,
+    double StripScalePercent = 101, double StripOffsetX = 0, double StripOffsetY = -4,
+    double StripGapMm = 0)
+{
+    public PrintCalibration Clamped() => new(
+        Math.Clamp(ScalePercent, 85, 115), Math.Clamp(OffsetX, -50, 50), Math.Clamp(OffsetY, -50, 50),
+        Math.Clamp(StripScalePercent, 85, 115), Math.Clamp(StripOffsetX, -50, 50), Math.Clamp(StripOffsetY, -50, 50),
+        Math.Clamp(StripGapMm, 0, 8));
+}
+
 /// <summary>Toàn cảnh máy in: các hàng đợi, máy đang chọn, và máy USB đã cắm nhưng chưa cài driver.</summary>
 public sealed record PrinterOverview(
     IReadOnlyList<PrinterQueueInfo> Printers,
@@ -40,7 +60,12 @@ public sealed record PrinterOverview(
 
 /// <summary>
 /// In ảnh ghép qua hàng đợi in của Windows (driver của hãng lo màu và cắt giấy).
-/// Ảnh dải 2x6 được xếp hai dải cạnh nhau trên một tờ 4x6 và in bằng khổ có cắt đôi của driver.
+/// Layout dải (hai dải 2x6 trên một tờ 4x6) phải in kèm lệnh cắt đôi. Cách chắc nhất, giống FavoriCurrent:
+/// tạo thêm một hàng đợi thứ hai cho cùng máy in, tên có "2x6" (vd. "DS-RX1-2x6"), đặt sẵn preset cắt 2 inch
+/// trong Printing Preferences của hàng đợi đó; app in dải ra hàng đợi này và giữ nguyên preset của nó.
+/// Với driver DNP DS-RX1, lệnh cắt là mục "Cutter control = 2inch cut" ở tab Option, đi với khổ 4x6 thường;
+/// các khổ tên "... x 2" là in hai tấm 4x6 trên giấy 6x8, không phải cắt dải, nên app không coi đó là khổ cắt.
+/// Không có hàng đợi riêng thì dải được in trên khổ 4x6 thường, không cắt, và app ghi cảnh báo vào log.
 /// </summary>
 public sealed class WindowsPrinterService : IPrinterService
 {
@@ -57,6 +82,7 @@ public sealed class WindowsPrinterService : IPrinterService
     private readonly Action<string> _log;
     private readonly SemaphoreSlim _printGate = new(1, 1);
     private string _configuredPrinter = string.Empty;
+    private PrintCalibration _calibration = new();
 
     public event EventHandler<PrinterStatusChangedEventArgs>? StatusChanged;
     public event EventHandler<PrintJobProgressEventArgs>? JobProgress;
@@ -72,12 +98,35 @@ public sealed class WindowsPrinterService : IPrinterService
     /// <summary>Tên máy in admin đã chọn; rỗng = tự chọn máy in ảnh đầu tiên.</summary>
     public string ConfiguredPrinter => _configuredPrinter;
 
+    public PrintCalibration Calibration => _calibration;
+
+    public void SetCalibration(PrintCalibration calibration)
+    {
+        _calibration = calibration.Clamped();
+        SaveConfig();
+    }
+
     public void SelectPrinter(string? printerName)
     {
         _configuredPrinter = printerName?.Trim() ?? string.Empty;
+        SaveConfig();
+    }
+
+    private void SaveConfig()
+    {
         try
         {
-            File.WriteAllText(_configPath, JsonSerializer.Serialize(new { printerName = _configuredPrinter }));
+            File.WriteAllText(_configPath, JsonSerializer.Serialize(new
+            {
+                printerName = _configuredPrinter,
+                scalePercent = _calibration.ScalePercent,
+                offsetX = _calibration.OffsetX,
+                offsetY = _calibration.OffsetY,
+                stripScalePercent = _calibration.StripScalePercent,
+                stripOffsetX = _calibration.StripOffsetX,
+                stripOffsetY = _calibration.StripOffsetY,
+                stripGapMm = _calibration.StripGapMm,
+            }));
         }
         catch (Exception ex)
         {
@@ -91,7 +140,19 @@ public sealed class WindowsPrinterService : IPrinterService
         {
             if (!File.Exists(_configPath)) return;
             using var doc = JsonDocument.Parse(File.ReadAllText(_configPath));
-            if (doc.RootElement.TryGetProperty("printerName", out var name)) _configuredPrinter = name.GetString() ?? string.Empty;
+            var root = doc.RootElement;
+            if (root.TryGetProperty("printerName", out var name)) _configuredPrinter = name.GetString() ?? string.Empty;
+            double Number(string key, double fallback) =>
+                root.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : fallback;
+            var defaults = new PrintCalibration();
+            _calibration = new PrintCalibration(
+                Number("scalePercent", defaults.ScalePercent),
+                Number("offsetX", defaults.OffsetX),
+                Number("offsetY", defaults.OffsetY),
+                Number("stripScalePercent", defaults.StripScalePercent),
+                Number("stripOffsetX", defaults.StripOffsetX),
+                Number("stripOffsetY", defaults.StripOffsetY),
+                Number("stripGapMm", defaults.StripGapMm)).Clamped();
         }
         catch (Exception ex)
         {
@@ -149,8 +210,23 @@ public sealed class WindowsPrinterService : IPrinterService
         {
             return queues.FirstOrDefault(p => string.Equals(p.Name, _configuredPrinter, StringComparison.OrdinalIgnoreCase));
         }
-        // Không tự in ra máy in ảo (PDF, XPS...): chỉ tự chọn máy in ảnh
-        return queues.FirstOrDefault(p => p.IsPhotoPrinter && !p.IsVirtual);
+        // Không tự in ra máy in ảo (PDF, XPS...): chỉ tự chọn máy in ảnh; hàng đợi cắt dải để dành cho layout dải
+        return queues.FirstOrDefault(p => p.IsPhotoPrinter && !p.IsVirtual && !IsStripQueueName(p.Name))
+            ?? queues.FirstOrDefault(p => p.IsPhotoPrinter && !p.IsVirtual);
+    }
+
+    private static bool IsStripQueueName(string name) =>
+        Regex.IsMatch(name, @"2\s*x\s*6|6\s*x\s*2|strip|cut", RegexOptions.IgnoreCase);
+
+    /// <summary>Hàng đợi riêng cho dải ảnh (preset cắt đặt sẵn): cùng cổng USB với máy in chính thì ưu tiên.</summary>
+    private static PrinterQueueInfo? FindStripQueue(IReadOnlyList<PrinterQueueInfo> queues, PrinterQueueInfo main)
+    {
+        if (IsStripQueueName(main.Name)) return main;
+        var candidates = queues
+            .Where(q => !q.IsVirtual && !string.Equals(q.Name, main.Name, StringComparison.OrdinalIgnoreCase) && IsStripQueueName(q.Name))
+            .ToList();
+        return candidates.FirstOrDefault(q => string.Equals(q.Port, main.Port, StringComparison.OrdinalIgnoreCase))
+            ?? candidates.FirstOrDefault(q => q.IsPhotoPrinter);
     }
 
     private List<PrinterQueueInfo> ListQueues()
@@ -265,6 +341,14 @@ public sealed class WindowsPrinterService : IPrinterService
             : overview.Printers.FirstOrDefault(p => string.Equals(p.Name, request.PrinterName, StringComparison.OrdinalIgnoreCase));
         if (printer == null) return Failed(ErrorCode.PrinterDriverNotFound, overview.Message);
 
+        // Dải ảnh: dùng hàng đợi có preset cắt nếu đã tạo (cùng một máy in nên trạng thái như máy in chính)
+        bool usePreset = false;
+        if (request.PaperType == PaperType.DoubleStrip2x6 && FindStripQueue(overview.Printers, printer) is { } stripQueue)
+        {
+            printer = stripQueue;
+            usePreset = true;
+        }
+
         switch (printer.Status)
         {
             case PrinterDeviceStatus.Offline: return Failed(ErrorCode.PrinterOffline, $"{printer.Name}: {printer.StatusText}");
@@ -277,7 +361,7 @@ public sealed class WindowsPrinterService : IPrinterService
         try
         {
             Report(jobId, 10, "Đang gửi ảnh tới máy in");
-            var (sheets, paperName) = await Task.Run(() => SpoolImage(printer.Name, request, jobId), cancellationToken);
+            var (sheets, paperName) = await Task.Run(() => SpoolImage(printer.Name, request, jobId, usePreset), cancellationToken);
             await _paperCounter.RecordSheetsPrintedAsync(sheets, cancellationToken);
             Report(jobId, 100, "Đã gửi lệnh in");
             _log($"[INFO] Print {jobId}: {sheets} sheet(s) on \"{printer.Name}\", paper \"{paperName}\", image {request.ImagePath}");
@@ -301,27 +385,42 @@ public sealed class WindowsPrinterService : IPrinterService
     private void Report(string jobId, int percent, string text) =>
         JobProgress?.Invoke(this, new PrintJobProgressEventArgs { JobId = jobId, ProgressPercent = percent, StatusText = text });
 
-    /// <summary>Đưa ảnh vào hàng đợi in. Trả về số tờ giấy dùng và tên khổ giấy đã chọn.</summary>
-    private (int Sheets, string PaperName) SpoolImage(string printerName, PrintJobRequest request, string jobId)
+    /// <summary>
+    /// Đưa ảnh vào hàng đợi in. Trả về số tờ giấy dùng và tên khổ giấy đã chọn.
+    /// <paramref name="usePreset"/>: hàng đợi có preset cắt đặt sẵn, không ghi đè khổ giấy để giữ lệnh cắt của driver.
+    /// </summary>
+    private (int Sheets, string PaperName) SpoolImage(string printerName, PrintJobRequest request, string jobId, bool usePreset)
     {
         using var image = Image.FromFile(request.ImagePath);
 
-        // Dải 2x6 (tỉ lệ ~1:3): hai dải cạnh nhau trên một tờ 4x6, máy in cắt đôi
-        bool isStrip = image.Width * 2.5 < image.Height || image.Height * 2.5 < image.Width;
+        // Ảnh một dải (tỉ lệ ~1:3): app tự xếp hai dải cạnh nhau. Ảnh ghép layout dải (2400x3600) đã có sẵn hai dải.
+        bool singleStripImage = image.Width * 2.5 < image.Height || image.Height * 2.5 < image.Width;
+        bool needsCut = singleStripImage || request.PaperType == PaperType.DoubleStrip2x6;
         int copies = Math.Max(1, request.Copies);
-        int sheets = isStrip ? (copies + 1) / 2 : copies;
+        // Mỗi tờ 4x6 cắt ra hai dải
+        int sheets = needsCut ? (copies + 1) / 2 : copies;
 
         using var doc = new PrintDocument { DocumentName = $"HihiBooth {jobId}", PrintController = new StandardPrintController() };
         doc.PrinterSettings.PrinterName = printerName;
         if (!doc.PrinterSettings.IsValid) throw new InvalidPrinterException(doc.PrinterSettings);
 
-        var paper = ChoosePaper(doc.PrinterSettings, isStrip);
+        var paper = usePreset ? null : ChoosePaper(doc.PrinterSettings, needsCut);
         if (paper != null) doc.DefaultPageSettings.PaperSize = paper;
+        if (needsCut && !usePreset && (paper == null || !IsCutPaperName(paper.PaperName)))
+        {
+            _log($"[WARN] Print {jobId}: không có khổ giấy cắt đôi trên \"{printerName}\" và chưa có hàng đợi \"...2x6\"; dải ảnh sẽ không được cắt");
+        }
         doc.DefaultPageSettings.Margins = new Margins(0, 0, 0, 0);
         doc.OriginAtMargins = false;
         doc.DefaultPageSettings.Landscape = false;
 
-        double zoom = request.ZoomCorrection > 0 ? request.ZoomCorrection : 1.0;
+        var calibration = _calibration;
+        double extraZoom = request.ZoomCorrection > 0 ? request.ZoomCorrection : 1.0;
+        double scale = (needsCut ? calibration.StripScalePercent : calibration.ScalePercent) / 100.0 * extraZoom;
+        float offsetX = (float)(needsCut ? calibration.StripOffsetX : calibration.OffsetX) + request.OffsetX;
+        float offsetY = (float)(needsCut ? calibration.StripOffsetY : calibration.OffsetY) + request.OffsetY;
+        // Đơn vị trang in là 1/100 inch; mỗi dải dịch ra ngoài một nửa khoảng hở
+        float stripShift = (float)(calibration.StripGapMm / 2 / 25.4 * 100);
         int page = 0;
         doc.PrintPage += (_, e) =>
         {
@@ -331,20 +430,34 @@ public sealed class WindowsPrinterService : IPrinterService
             g.CompositingQuality = CompositingQuality.HighQuality;
 
             RectangleF bounds = e.PageBounds;
-            float w = (float)(bounds.Width * zoom), h = (float)(bounds.Height * zoom);
+            bool portrait = bounds.Width <= bounds.Height;
+            float shortSide = Math.Min(bounds.Width, bounds.Height), longSide = Math.Max(bounds.Width, bounds.Height);
+            // Trang 4x6 (kể cả trang tràn lề 4.13 x 6.15 của DNP): ảnh danh nghĩa đúng 4 x 6 inch. Khổ khác: theo trang.
+            bool is4x6 = Math.Abs(shortSide - 400) <= 30 && Math.Abs(longSide - 600) <= 30;
+            float nominalW = is4x6 ? (portrait ? 400 : 600) : bounds.Width;
+            float nominalH = is4x6 ? (portrait ? 600 : 400) : bounds.Height;
+            float w = (float)(nominalW * scale), h = (float)(nominalH * scale);
             var target = new RectangleF(
-                bounds.X + (bounds.Width - w) / 2 + request.OffsetX,
-                bounds.Y + (bounds.Height - h) / 2 + request.OffsetY,
+                bounds.X + (bounds.Width - w) / 2 + offsetX,
+                bounds.Y + (bounds.Height - h) / 2 + offsetY,
                 w, h);
 
-            if (isStrip) DrawTwoStrips(g, image, target);
-            else DrawFitted(g, image, target);
+            if (singleStripImage)
+            {
+                DrawTwoStrips(g, image, bounds, target, stripShift);
+            }
+            else
+            {
+                // Lót bản phủ kín trang bên dưới để phần tràn lề không bị trắng nếu máy xén ít hơn dự tính
+                DrawFitted(g, image, bounds);
+                DrawFitted(g, image, target);
+            }
 
             page++;
             e.HasMorePages = page < sheets;
         };
         doc.Print();
-        return (sheets, paper?.PaperName ?? doc.DefaultPageSettings.PaperSize.PaperName);
+        return (sheets, (usePreset ? "preset: " : "") + (paper?.PaperName ?? doc.DefaultPageSettings.PaperSize.PaperName));
     }
 
     /// <summary>Vẽ ảnh phủ kín vùng in; ảnh và giấy lệch chiều (dọc / ngang) thì xoay ảnh 90°.</summary>
@@ -363,27 +476,31 @@ public sealed class WindowsPrinterService : IPrinterService
         g.Restore(state);
     }
 
-    /// <summary>Hai dải giống nhau chia đôi tờ giấy theo cạnh dài (đường cắt nằm giữa hai dải).</summary>
-    private static void DrawTwoStrips(Graphics g, Image strip, RectangleF target)
+    /// <summary>
+    /// Hai dải giống nhau đặt cạnh nhau trong <paramref name="sheet"/> (vùng ảnh đã căn chỉnh), chia theo cạnh dài;
+    /// đường cắt của máy in nằm giữa trang. Mỗi dải dịch ra xa đường giữa <paramref name="shift"/> (1/100 inch).
+    /// Bên dưới lót một bản phủ kín nửa trang để phần tràn lề không bị trắng.
+    /// </summary>
+    private static void DrawTwoStrips(Graphics g, Image strip, RectangleF page, RectangleF sheet, float shift)
     {
-        if (target.Width <= target.Height)
+        bool sideBySide = page.Width <= page.Height; // giấy dọc: hai dải trái / phải; giấy ngang: trên / dưới
+        for (int i = 0; i < 2; i++)
         {
-            // Giấy dọc: hai dải dọc trái / phải
-            float half = target.Width / 2;
-            DrawFitted(g, strip, new RectangleF(target.X, target.Y, half, target.Height));
-            DrawFitted(g, strip, new RectangleF(target.X + half, target.Y, half, target.Height));
+            DrawFitted(g, strip, sideBySide
+                ? new RectangleF(page.X + i * page.Width / 2, page.Y, page.Width / 2, page.Height)
+                : new RectangleF(page.X, page.Y + i * page.Height / 2, page.Width, page.Height / 2));
         }
-        else
+        for (int i = 0; i < 2; i++)
         {
-            // Giấy ngang: hai dải nằm ngang trên / dưới
-            float half = target.Height / 2;
-            DrawFitted(g, strip, new RectangleF(target.X, target.Y, target.Width, half));
-            DrawFitted(g, strip, new RectangleF(target.X, target.Y + half, target.Width, half));
+            float away = i == 0 ? -shift : shift;
+            DrawFitted(g, strip, sideBySide
+                ? new RectangleF(sheet.X + i * sheet.Width / 2 + away, sheet.Y, sheet.Width / 2, sheet.Height)
+                : new RectangleF(sheet.X, sheet.Y + i * sheet.Height / 2 + away, sheet.Width, sheet.Height / 2));
         }
     }
 
     /// <summary>
-    /// Chọn khổ giấy 4x6 của driver. Dải 2x6: ưu tiên khổ có cắt đôi ("2x6", "(6x4) x 2"...).
+    /// Chọn khổ giấy 4x6 của driver. Dải 2x6: ưu tiên khổ có tên cắt dải ("2x6", "cut", "strip") nếu driver có.
     /// Không khớp tên thì lấy khổ có kích thước gần 4x6 inch nhất.
     /// </summary>
     private static PaperSize? ChoosePaper(PrinterSettings settings, bool isStrip)
@@ -396,7 +513,7 @@ public sealed class WindowsPrinterService : IPrinterService
             int shortSide = Math.Min(p.Width, p.Height), longSide = Math.Max(p.Width, p.Height);
             return Math.Abs(shortSide - 400) <= 25 && Math.Abs(longSide - 600) <= 30; // đơn vị 1/100 inch
         }
-        static bool IsCutName(string name) => Regex.IsMatch(name, @"2\s*x\s*6|6\s*x\s*2|x\s*2\b|cut|strip", RegexOptions.IgnoreCase);
+        static bool IsCutName(string name) => IsCutPaperName(name);
 
         var fourBySix = sizes.Where(Is4x6).ToList();
         if (isStrip)
@@ -412,6 +529,9 @@ public sealed class WindowsPrinterService : IPrinterService
             .OrderBy(p => Math.Abs(Math.Min(p.Width, p.Height) - 400) + Math.Abs(Math.Max(p.Width, p.Height) - 600))
             .First();
     }
+
+    private static bool IsCutPaperName(string name) =>
+        Regex.IsMatch(name, @"2\s*x\s*6|6\s*x\s*2|cut|strip", RegexOptions.IgnoreCase);
 
     /// <summary>Các khổ giấy driver của máy in hỗ trợ (để admin kiểm tra đã có khổ 4x6 / cắt 2x6 chưa).</summary>
     public static IReadOnlyList<string> ListPaperSizes(string printerName)

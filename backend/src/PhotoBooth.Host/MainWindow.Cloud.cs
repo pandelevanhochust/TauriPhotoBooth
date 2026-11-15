@@ -75,7 +75,7 @@ public partial class MainWindow
         {
             _captureStepActive = false;
         }
-        return _captureStepActive || Volatile.Read(ref _timelapse) != null;
+        return _captureStepActive || IsRecordingSessionVideo;
     }
 
     /// <summary>Thu nhỏ ảnh lẻ / tạo ảnh nhỏ trước khi gửi. Chạy ở mức ưu tiên thấp để không tranh CPU với live view.</summary>
@@ -227,7 +227,7 @@ public partial class MainWindow
     {
         string dirName = Path.GetFileName(_currentSessionDir);
         bool videoEncoding = !string.IsNullOrEmpty(dirName)
-            && (Volatile.Read(ref _videoEncodingSession) == dirName || Volatile.Read(ref _timelapse) != null);
+            && (Volatile.Read(ref _videoEncodingSession) == dirName || IsRecordingSessionVideo);
         // Xem trước ưu tiên timelapse tua nhanh (ngắn, lặp lại đẹp hơn), không có thì dùng video đầy đủ
         string? previewFile = videoEncoding || string.IsNullOrEmpty(_currentSessionDir) ? null
             : File.Exists(Path.Combine(_currentSessionDir, FastTimelapseFile)) ? FastTimelapseFile
