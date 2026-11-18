@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FavoriLayout } from './FavoriLayout';
 import { Loader2, Image as ImageIcon } from 'lucide-react';
 import { backendApi, type FrameOption, type LayoutOption } from '../../services/backendApi';
+import { ipc } from '../../services/ipc';
 
 export type { FrameOption };
 
@@ -25,23 +26,42 @@ export const FavoriFrameScreen: React.FC<FavoriFrameScreenProps> = ({
 
   const layoutId = layout?.id;
 
+  // Frame đang chọn, đọc trong callback của sự kiện mà không phải đăng ký lại
+  const selectedRef = useRef(selectedFrame);
+  selectedRef.current = selectedFrame;
+
   useEffect(() => {
     let isMounted = true;
     setLoading(true);
 
-    backendApi.getFrames(layoutId).then((data) => {
-      if (!isMounted) return;
-      setFrames(data);
-      setLoading(false);
+    const load = (fromServerUpdate: boolean) =>
+      backendApi.getFrames(layoutId).then((data) => {
+        if (!isMounted) return;
+        setFrames(data);
+        setLoading(false);
 
-      // Frame đang giữ không thuộc layout này (đổi layout, phiên trước): chọn lại frame đầu tiên
-      const matched = data.find((f) => f.id === selectedFrame);
-      const next = matched || data[0];
-      if (next) onSelectFrame(next.id, next);
+        const matched = data.find((f) => f.id === selectedRef.current);
+        if (matched) {
+          // Truyền lại bản mới (ô ảnh, vị trí QR có thể vừa đổi trên CMS)
+          onSelectFrame(matched.id, matched);
+        } else if (fromServerUpdate) {
+          // Frame khách đang chọn vừa bị gỡ trên CMS: bỏ chọn để khách tự chọn lại (nút Tiếp tục bị khoá tới khi chọn)
+          if (selectedRef.current) onSelectFrame('', undefined);
+        } else if (data[0]) {
+          // Mới vào bước (đổi layout, phiên trước): chọn sẵn frame đầu tiên
+          onSelectFrame(data[0].id, data[0]);
+        }
+      });
+
+    // Host trả ngay bản đã lưu rồi hỏi server ngầm; server có thay đổi thì tải lại danh sách
+    const unlisten = ipc.listen<{ key?: string }>('cms_updated', (data) => {
+      if (data?.key === 'frames') load(true);
     });
+    load(false);
 
     return () => {
       isMounted = false;
+      unlisten();
     };
   }, [layoutId]);
 
@@ -81,17 +101,21 @@ export const FavoriFrameScreen: React.FC<FavoriFrameScreenProps> = ({
                   onClick={() => onSelectFrame(frame.id, frame)}
                   aria-pressed={isSelected}
                   aria-label={frame.name}
-                  style={{ aspectRatio }}
-                  className={`h-[34vh] min-h-[220px] p-0 border-0 bg-transparent cursor-pointer transition-all duration-200 ${
-                    isSelected
-                      ? 'scale-[1.06] drop-shadow-xl'
-                      : 'opacity-80 active:scale-[0.98]'
+                  style={{
+                    // Viền ôm sát chính ảnh frame (nút co theo ảnh), không theo ô tỉ lệ của layout
+                    boxShadow: isSelected
+                      ? '0 0 0 4px #7a0000, 0 0 18px 6px rgba(190, 40, 40, 0.45), 0 0 40px 10px rgba(190, 40, 40, 0.2)'
+                      : 'none',
+                  }}
+                  className={`block p-0 border-0 bg-transparent cursor-pointer transition-all duration-200 ${
+                    isSelected ? 'scale-[1.06]' : 'opacity-80 active:scale-[0.98]'
                   }`}
                 >
                   <img
                     src={frame.thumbnailUrl || frame.frameUrl}
                     alt=""
-                    className="w-full h-full object-contain pointer-events-none select-none"
+                    style={{ aspectRatio: `auto ${aspectRatio}` }}
+                    className="block h-[34vh] min-h-[220px] w-auto max-w-full pointer-events-none select-none"
                     loading="lazy"
                     onError={(e) => {
                       const img = e.currentTarget;

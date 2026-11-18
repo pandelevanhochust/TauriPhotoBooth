@@ -5,6 +5,8 @@ import { getKioskSettings, saveKioskSettings, type KioskSettings, type NumericSe
 import { CameraCheckPanel } from './admin/CameraCheckPanel';
 import { PrinterCheckPanel } from './admin/PrinterCheckPanel';
 import { CloudUploadPanel } from './admin/CloudUploadPanel';
+import { PrintImageTestPanel } from './admin/PrintImageTestPanel';
+import { ScrollableTabs } from './admin/ScrollableTabs';
 
 const TIMING_FIELDS: { key: NumericSettingKey; label: string; unit: string }[] = [
   { key: 'remoteCaptureTimeoutSec', label: 'Thời gian chụp bằng nút bấm', unit: 'giây' },
@@ -12,6 +14,16 @@ const TIMING_FIELDS: { key: NumericSettingKey; label: string; unit: string }[] =
   { key: 'totalShots', label: 'Số tấm chụp mỗi phiên', unit: 'tấm' },
   { key: 'filterTimeoutSec', label: 'Thời gian chọn bộ lọc (bước 8)', unit: 'giây' },
   { key: 'selectTimeoutSec', label: 'Thời gian chọn ảnh (bước 9)', unit: 'giây' },
+];
+
+type AdminTab = 'status' | 'timing' | 'hardware' | 'printtest' | 'reprint';
+
+const TABS: { id: AdminTab; label: string }[] = [
+  { id: 'status', label: 'Giấy In & Chế Độ' },
+  { id: 'timing', label: 'Thời Gian' },
+  { id: 'hardware', label: 'Kiểm Tra Thiết Bị' },
+  { id: 'printtest', label: 'Test In Ảnh' },
+  { id: 'reprint', label: 'In Lại (Reprint)' },
 ];
 
 interface AdminModalProps {
@@ -36,7 +48,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   // Admin Dashboard State
   const [paper, setPaper] = useState(currentPaperCount);
   const [mode, setMode] = useState(kioskMode);
-  const [activeTab, setActiveTab] = useState<'status' | 'timing' | 'hardware' | 'reprint'>('status');
+  const [activeTab, setActiveTab] = useState<AdminTab>('status');
   const [timing, setTiming] = useState<KioskSettings>(() => getKioskSettings());
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
@@ -94,7 +106,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-6 text-white select-none">
-      <div className="relative w-full max-w-2xl bg-[#161824] rounded-3xl border border-white/20 shadow-2xl p-8 flex flex-col">
+      <div className="relative w-full max-w-2xl max-h-[94vh] bg-[#161824] rounded-3xl border border-white/20 shadow-2xl p-8 flex flex-col min-h-0">
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -153,9 +165,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           </div>
         ) : (
           /* Admin Dashboard */
-          <div className="flex flex-col h-full">
+          <div className="flex flex-col h-full min-h-0">
             {/* Header */}
-            <div className="mb-6">
+            <div className="mb-6 flex-shrink-0">
               <h3 className="text-2xl font-bold flex items-center gap-3">
                 <Sliders className="w-6 h-6 text-rose-400" />
                 <span>BẢNG ĐIỀU KHIỂN HỆ THỐNG</span>
@@ -164,43 +176,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             </div>
 
             {/* Tabs */}
-            <div className="flex gap-3 mb-6 border-b border-white/10 pb-3">
-              <button
-                onClick={() => setActiveTab('status')}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  activeTab === 'status' ? 'bg-rose-500 text-white' : 'bg-white/5 text-gray-400 hover:text-white'
-                }`}
-              >
-                Giấy In & Chế Độ
-              </button>
-              <button
-                onClick={() => setActiveTab('timing')}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  activeTab === 'timing' ? 'bg-rose-500 text-white' : 'bg-white/5 text-gray-400 hover:text-white'
-                }`}
-              >
-                Thời Gian
-              </button>
-              <button
-                onClick={() => setActiveTab('hardware')}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  activeTab === 'hardware' ? 'bg-rose-500 text-white' : 'bg-white/5 text-gray-400 hover:text-white'
-                }`}
-              >
-                Kiểm Tra Thiết Bị
-              </button>
-              <button
-                onClick={() => setActiveTab('reprint')}
-                className={`px-4 py-2 rounded-xl text-sm font-semibold transition ${
-                  activeTab === 'reprint' ? 'bg-rose-500 text-white' : 'bg-white/5 text-gray-400 hover:text-white'
-                }`}
-              >
-                In Lại (Reprint)
-              </button>
-            </div>
+            <ScrollableTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
-            {/* Tab Contents */}
-            <div className="flex-1 space-y-6">
+            {/* Tab Contents: cuộn được bằng cảm ứng / lăn chuột, thanh cuộn được ẩn ở index.css */}
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-6">
               {activeTab === 'status' && (
                 <div className="space-y-6">
                   {/* Paper Count Management */}
@@ -302,6 +281,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 </div>
               )}
 
+              {activeTab === 'printtest' && <PrintImageTestPanel />}
+
               {activeTab === 'reprint' && (
                 <div className="space-y-3">
                   <p className="text-xs text-gray-400 mb-2">
@@ -336,14 +317,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
             {/* Status Feedback Message */}
             {actionMessage && (
-              <div className="mt-4 p-3 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+              <div className="mt-4 p-3 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2 flex-shrink-0">
                 <CheckCircle className="w-4 h-4" />
                 <span>{actionMessage}</span>
               </div>
             )}
 
             {/* Footer Buttons */}
-            <div className="mt-8 pt-4 border-t border-white/10 flex justify-end gap-3">
+            <div className="mt-4 pt-4 border-t border-white/10 flex justify-end gap-3 flex-shrink-0">
               <button
                 onClick={onClose}
                 className="px-6 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-sm font-semibold transition"

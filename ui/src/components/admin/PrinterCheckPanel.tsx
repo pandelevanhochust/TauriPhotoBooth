@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Printer, RefreshCw, Loader2, FileCheck } from 'lucide-react';
-import { printerApi, type PrinterStatus } from '../../services/printer';
+import { printerApi, type PrintCalibration, type PrinterStatus } from '../../services/printer';
 
 /** Kiểm tra máy in: trạng thái hàng đợi in của Windows, chọn máy in, in thử. */
 export const PrinterCheckPanel: React.FC = () => {
@@ -8,6 +8,41 @@ export const PrinterCheckPanel: React.FC = () => {
   const [checking, setChecking] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [calibration, setCalibration] = useState<PrintCalibration | null>(null);
+  const [savedNote, setSavedNote] = useState('');
+
+  // Nạp giá trị căn chỉnh từ host một lần; sau đó giữ giá trị người dùng đang gõ
+  useEffect(() => {
+    if (status && calibration === null) setCalibration(status.calibration);
+  }, [status, calibration]);
+
+  const handleSaveCalibration = async () => {
+    if (!calibration) return;
+    const next = await printerApi.calibrate(calibration);
+    setStatus(next);
+    setCalibration(next.calibration);
+    setSavedNote('Đã lưu. Áp dụng từ lần in tiếp theo.');
+  };
+
+  const calibrationField = (key: keyof PrintCalibration, label: string, step: number, unit: string) => (
+    <label className="flex flex-col gap-1 text-[11px] text-gray-400">
+      {label}
+      <span className="flex items-center gap-1">
+        <input
+          type="number"
+          step={step}
+          value={calibration ? calibration[key] : ''}
+          onChange={(e) => {
+            const value = Number(e.target.value);
+            setSavedNote('');
+            if (calibration && Number.isFinite(value)) setCalibration({ ...calibration, [key]: value });
+          }}
+          className="w-20 bg-black/50 border border-white/20 rounded-lg px-2 py-1 text-xs text-white"
+        />
+        {unit}
+      </span>
+    </label>
+  );
 
   useEffect(() => {
     let active = true;
@@ -124,6 +159,32 @@ export const PrinterCheckPanel: React.FC = () => {
       {status && status.paperSizes.length > 0 && (
         <div className="text-[11px] text-gray-500 leading-relaxed">
           Khổ giấy của driver: {status.paperSizes.join(' · ')}
+        </div>
+      )}
+
+      {calibration && (
+        <div className="space-y-2 pt-3 border-t border-white/10">
+          <div className="text-xs font-semibold text-gray-300">Căn chỉnh bản in</div>
+          <div className="flex flex-wrap items-end gap-4">
+            <span className="w-16 text-[11px] text-gray-300">Dải 2x6</span>
+            {calibrationField('stripScalePercent', 'Tỉ lệ', 0.5, '%')}
+            {calibrationField('stripOffsetX', 'Dịch ngang', 1, '')}
+            {calibrationField('stripOffsetY', 'Dịch dọc', 1, '')}
+            {calibrationField('stripGapMm', 'Khe giữa hai dải', 0.1, 'mm')}
+          </div>
+          <div className="flex flex-wrap items-end gap-4">
+            <span className="w-16 text-[11px] text-gray-300">Ảnh 4x6</span>
+            {calibrationField('scalePercent', 'Tỉ lệ', 0.5, '%')}
+            {calibrationField('offsetX', 'Dịch ngang', 1, '')}
+            {calibrationField('offsetY', 'Dịch dọc', 1, '')}
+            <button onClick={handleSaveCalibration} className={`${actionBtn} bg-white/10 hover:bg-white/20`}>
+              Lưu căn chỉnh
+            </button>
+          </div>
+          <div className="text-[11px] text-gray-500 leading-relaxed">
+            Cùng đơn vị với app FavoriCurrent: dịch tính bằng 1/100 inch, số dương là sang phải / xuống dưới.
+            {savedNote ? ` ${savedNote}` : ''}
+          </div>
         </div>
       )}
 

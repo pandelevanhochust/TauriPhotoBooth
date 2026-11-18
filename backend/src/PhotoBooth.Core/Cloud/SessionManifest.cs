@@ -13,6 +13,8 @@ public static class ManifestState
     public const string Ready = "ready";
     /// <summary>Lỗi không thử lại được (vd. shareToken trùng). Cần người vận hành xử lý tay.</summary>
     public const string Failed = "failed";
+    /// <summary>Server báo phiên đã hết hạn (410) nên không gửi được nữa. File trên máy vẫn giữ tới khi quá 7 ngày.</summary>
+    public const string Expired = "expired";
 }
 
 public static class ManifestFileStatus
@@ -77,7 +79,7 @@ public sealed class SessionManifest
     public string? LayoutId { get; set; }
     public int PrintQuantity { get; set; } = 1;
 
-    /// <summary>Thư mục của phiên trên máy, xoá khi phiên hết hạn.</summary>
+    /// <summary>Thư mục của phiên trên máy: xoá khi phiên đã gửi xong và hết hạn, hoặc khi quá 7 ngày dù chưa gửi được.</summary>
     public List<string> LocalDirectories { get; set; } = new();
 
     public string State { get; set; } = ManifestState.Pending;

@@ -18,6 +18,27 @@ const TIMELAPSE_FRAME_WIDTH = 1280;
 // Rời bước chụp: chờ tối đa bấy lâu cho các ảnh còn đang tải từ máy ảnh về
 const PENDING_SHOTS_TIMEOUT_MS = 12000;
 
+/**
+ * Phím do nút bấm rời gửi tới (nút USB, bút trình chiếu, remote Bluetooth chụp ảnh đều giả lập bàn phím).
+ * Chế độ chụp bằng điều khiển từ xa: bấm một trong các phím này là chụp một tấm.
+ */
+const REMOTE_TRIGGER_KEYS = new Set([
+  ' ',
+  'Enter',
+  'PageDown',
+  'PageUp',
+  'ArrowRight',
+  'ArrowLeft',
+  'ArrowUp',
+  'ArrowDown',
+  'b',
+  'B',
+  '.',
+  'AudioVolumeUp',
+  'AudioVolumeDown',
+  'MediaPlayPause',
+]);
+
 interface FavoriLiveViewScreenProps {
   totalShots?: number;
   mode?: 'remote' | 'autoCountdown';
@@ -27,6 +48,8 @@ interface FavoriLiveViewScreenProps {
   remoteTimeoutSec?: number;
   /** Ghi video timelapse trong lúc chụp. */
   timelapseEnabled?: boolean;
+  /** Tỉ lệ rộng / cao của ô ảnh trong frame; có giá trị thì vẽ đường kẻ và phủ mờ phần ảnh sẽ bị cắt khi in. */
+  guideAspect?: number;
   /** photos: ảnh để hiển thị (data URL); filePaths: ảnh gốc trên máy (cùng thứ tự, có thể rỗng). */
   onAllShotsCaptured: (photos: string[], filePaths: string[]) => void;
   onCancel: () => void;
@@ -75,6 +98,7 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
   countdownSec = 10,
   remoteTimeoutSec = 180,
   timelapseEnabled = false,
+  guideAspect,
   onAllShotsCaptured,
 }) => {
   const isRemote = mode === 'remote';
@@ -386,12 +410,52 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
     });
   }, [countdown, isRemote]);
 
-  // Chế độ nút bấm: mỗi lần bấm chụp ngay một tấm
+  // Chế độ điều khiển từ xa: mỗi tín hiệu từ nút bấm (phím) chụp ngay một tấm
   const handleRemoteShot = async () => {
-    if (isCapturing || finishedRef.current) return;
+    if (inFlightRef.current || finishedRef.current) return;
     const photos = await captureOne();
     if (photos.length >= totalShots) finish();
   };
+  const handleRemoteShotRef = useRef(handleRemoteShot);
+  handleRemoteShotRef.current = handleRemoteShot;
+  const finishRef = useRef(finish);
+  finishRef.current = finish;
+
+  // Nút bấm rời giả lập bàn phím (nút USB, bút trình chiếu, remote Bluetooth)
+  useEffect(() => {
+    if (!isRemote) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.repeat || !REMOTE_TRIGGER_KEYS.has(e.key)) return;
+      e.preventDefault();
+      handleRemoteShotRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isRemote]);
+
+  // Điều khiển từ xa của máy ảnh (Canon BR-E1...) hoặc nút chụp trên thân máy: máy tự chụp, host tải ảnh về rồi báo sang
+  useEffect(() => {
+    if (!isRemote || source !== 'dslr') return;
+    cameraApi.setRemoteShutter(true);
+    const off = cameraApi.onRemoteShot((shot) => {
+      if (finishedRef.current) return;
+      setIsFlashing(true);
+      setTimeout(() => setIsFlashing(false), 250);
+      playShutterSound();
+      const photo = shot.base64.startsWith('data:') ? shot.base64 : `data:image/jpeg;base64,${shot.base64}`;
+      photosRef.current = [...photosRef.current, photo];
+      pathsRef.current = [...pathsRef.current, shot.filePath || ''];
+      seqsRef.current = [...seqsRef.current, shot.shotIndex];
+      // Số tấm do host cấp: tấm chụp bằng phím sau đó không được trùng số
+      nextSeqRef.current = Math.max(nextSeqRef.current, shot.shotIndex + 1);
+      setShotsTaken(photosRef.current.length);
+      if (photosRef.current.length >= totalShots) finishRef.current();
+    });
+    return () => {
+      off();
+      cameraApi.setRemoteShutter(false);
+    };
+  }, [isRemote, source, totalShots]);
 
   // Chế độ nút bấm: hết giờ thì đi tiếp với ảnh đã có (chưa có tấm nào thì chụp một tấm)
   const remoteTimeLeft = useCountdown(
@@ -405,6 +469,15 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
   );
 
   const viewfinderAspect = source === 'dslr' ? DSLR_ASPECT : WEBCAM_ASPECT;
+
+  // Phần khung ngắm sẽ lọt vào ô của frame (ảnh đặt phủ kín ô, cắt giữa): tỉ lệ theo bề rộng / bề cao khung ngắm
+  const guide =
+    guideAspect && guideAspect > 0
+      ? {
+          sw: Math.min(1, guideAspect / viewfinderAspect),
+          sh: Math.min(1, viewfinderAspect / guideAspect),
+        }
+      : null;
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#f5f0ea] flex flex-col p-6 select-none">
@@ -433,11 +506,18 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
         <div />
       </header>
 
-      <main className="relative z-10 flex-1 min-h-0 flex items-center justify-center gap-8 w-full px-4">
-        {/* Khung ngắm */}
+      <main className="relative z-10 flex-1 min-h-0 flex items-stretch justify-center gap-6 w-full px-2">
+        {/* Cột trống cùng bề rộng với cột phải để khung ngắm nằm đúng giữa màn hình */}
+        <div className="w-40 flex-shrink-0" aria-hidden />
+
+        {/* Vùng chứa khung ngắm: khung lớn tối đa trong vùng này, giữ đúng tỉ lệ cảm biến (như FavoriCurrent) */}
+        <div className="flex-1 min-w-0 min-h-0 flex items-center justify-center" style={{ containerType: 'size' }}>
         <div
-          className="relative h-full max-h-[66vh] max-w-[calc(100%-13rem)] bg-neutral-950 overflow-hidden flex items-center justify-center"
-          style={{ aspectRatio: String(viewfinderAspect) }}
+          className="relative bg-neutral-950 overflow-hidden flex items-center justify-center"
+          style={{
+            aspectRatio: String(viewfinderAspect),
+            width: `min(100cqw, calc(100cqh * ${viewfinderAspect}))`,
+          }}
         >
           <video
             ref={videoRef}
@@ -448,6 +528,33 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
           />
           {source === 'dslr' && (
             <img ref={liveImgRef} alt="" className="w-full h-full object-cover scale-x-[-1]" />
+          )}
+
+          {/* Đường kẻ căn khung: phần sáng trong đường viền trắng là phần ảnh sẽ nằm trong ô của frame */}
+          {guide && (
+            <div className="absolute inset-0 pointer-events-none">
+              {guide.sw < 0.995 && (
+                <>
+                  <div className="absolute inset-y-0 left-0 bg-black/60" style={{ width: `${((1 - guide.sw) / 2) * 100}%` }} />
+                  <div className="absolute inset-y-0 right-0 bg-black/60" style={{ width: `${((1 - guide.sw) / 2) * 100}%` }} />
+                </>
+              )}
+              {guide.sh < 0.995 && (
+                <>
+                  <div className="absolute inset-x-0 top-0 bg-black/60" style={{ height: `${((1 - guide.sh) / 2) * 100}%` }} />
+                  <div className="absolute inset-x-0 bottom-0 bg-black/60" style={{ height: `${((1 - guide.sh) / 2) * 100}%` }} />
+                </>
+              )}
+              <div
+                className="absolute border-2 border-white/90"
+                style={{
+                  left: `${((1 - guide.sw) / 2) * 100}%`,
+                  top: `${((1 - guide.sh) / 2) * 100}%`,
+                  width: `${guide.sw * 100}%`,
+                  height: `${guide.sh * 100}%`,
+                }}
+              />
+            </div>
           )}
 
           {!cameraReady && (
@@ -483,9 +590,10 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
             </div>
           )}
         </div>
+        </div>
 
         {/* Cột phải: đồng hồ + số tấm đã chụp */}
-        <aside className="w-40 flex-shrink-0 h-full max-h-[66vh] flex flex-col items-center">
+        <aside className="w-40 flex-shrink-0 h-full flex flex-col items-center">
           <div className="h-24 flex flex-col items-center justify-start text-center">
             {isRemote && (
               <>
@@ -505,17 +613,14 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
             </span>
 
             {isRemote && (
-              <button
-                type="button"
-                onClick={handleRemoteShot}
-                disabled={isCapturing || isFinished}
-                className={`btn-favori-primary w-28 h-28 !rounded-full flex flex-col items-center justify-center gap-1 text-base font-semibold cursor-pointer shadow-xl ${
-                  isCapturing || isFinished ? 'opacity-50 cursor-not-allowed' : ''
+              <div
+                className={`flex flex-col items-center gap-2 text-center text-[#7a0000] transition-opacity ${
+                  isCapturing || isFinished ? 'opacity-40' : ''
                 }`}
               >
-                <Camera className="w-8 h-8" />
-                Bấm chụp
-              </button>
+                <Camera className="w-9 h-9" />
+                <span className="text-sm font-semibold leading-snug">Bấm nút trên điều khiển để chụp</span>
+              </div>
             )}
           </div>
 

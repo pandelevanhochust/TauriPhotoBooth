@@ -287,6 +287,18 @@ class IpcBridge {
               videoUrl: '',
             } as any);
             break;
+          case 'print_pick_image':
+            resolve({
+              success: true,
+              message: 'Đã gửi lệnh in (mô phỏng)',
+              fileName: 'anh-mau.jpg',
+              width: 1200,
+              height: 3600,
+              kind: '2x6',
+              sheets: 1,
+              remainingPaper: 349,
+            } as any);
+            break;
           case 'print_session':
             resolve({
               success: true,

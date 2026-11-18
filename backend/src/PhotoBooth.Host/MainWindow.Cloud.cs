@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using PhotoBooth.Core.Cloud;
+using PhotoBooth.Core.Storage;
 using PhotoBooth.Imaging;
 
 namespace PhotoBooth.Host;
@@ -68,6 +69,44 @@ public partial class MainWindow
         App.Log($"[INFO] Cloud upload: {(s.IsConfigured ? "bật" : s.Enabled ? "chưa cấu hình khoá API" : "tắt")}, server {s.BaseUrl}, thiết bị {s.EffectiveDeviceId}, link QR {s.ShareBaseUrl}");
     }
 
+    private System.Threading.Timer? _storageCleanupTimer;
+
+    /// <summary>
+    /// Dọn file cũ quá 7 ngày (phiên chụp, gallery, ảnh kiểm tra máy ảnh, khung video bị bỏ lại, log cũ): sau khi mở app 2 phút,
+    /// rồi mỗi 6 giờ. Phiên còn trong hàng đợi gửi do hàng đợi tự xoá. Không chạy khi khách đang chụp.
+    /// </summary>
+    private void StartStorageCleaner(string baseDataDir)
+    {
+        var cleaner = new StorageCleaner(
+            Path.Combine(baseDataDir, "Sessions"),
+            new[] { GetLocalGalleryRootDir(), Path.Combine(baseDataDir, "CameraTest") },
+            baseDataDir,
+            "host_startup",
+            log: App.Log);
+
+        void RunOnce()
+        {
+            if (IsCaptureBusy()) return;
+            var thread = Thread.CurrentThread;
+            var old = thread.Priority;
+            try
+            {
+                thread.Priority = ThreadPriority.BelowNormal;
+                cleaner.Run(dir => _uploadQueue?.ReferencesDirectory(dir) == true);
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[WARN] Dọn bộ nhớ thất bại: {ex.Message}");
+            }
+            finally
+            {
+                thread.Priority = old;
+            }
+        }
+
+        _storageCleanupTimer = new System.Threading.Timer(_ => RunOnce(), null, TimeSpan.FromMinutes(2), TimeSpan.FromHours(6));
+    }
+
     private bool IsCaptureBusy()
     {
         // Phòng khi UI không kịp báo rời bước chụp (vd. tải lại trang): tự bỏ cờ sau 20 phút
@@ -75,7 +114,7 @@ public partial class MainWindow
         {
             _captureStepActive = false;
         }
-        return _captureStepActive || Volatile.Read(ref _timelapse) != null;
+        return _captureStepActive || IsRecordingSessionVideo;
     }
 
     /// <summary>Thu nhỏ ảnh lẻ / tạo ảnh nhỏ trước khi gửi. Chạy ở mức ưu tiên thấp để không tranh CPU với live view.</summary>
@@ -129,7 +168,7 @@ public partial class MainWindow
         try
         {
             string printPath = Path.Combine(Path.GetDirectoryName(compositePath)!, "composite_print.jpg");
-            QrCodeRenderer.StampOnImage(compositePath, printPath, shareUrl, qx.Value, qy.Value, qs.Value, caption: null);
+            QrCodeRenderer.StampOnImage(compositePath, printPath, shareUrl, qx.Value, qy.Value, qs.Value);
             return printPath;
         }
         catch (Exception ex)
@@ -227,7 +266,7 @@ public partial class MainWindow
     {
         string dirName = Path.GetFileName(_currentSessionDir);
         bool videoEncoding = !string.IsNullOrEmpty(dirName)
-            && (Volatile.Read(ref _videoEncodingSession) == dirName || Volatile.Read(ref _timelapse) != null);
+            && (Volatile.Read(ref _videoEncodingSession) == dirName || IsRecordingSessionVideo);
         // Xem trước ưu tiên timelapse tua nhanh (ngắn, lặp lại đẹp hơn), không có thì dùng video đầy đủ
         string? previewFile = videoEncoding || string.IsNullOrEmpty(_currentSessionDir) ? null
             : File.Exists(Path.Combine(_currentSessionDir, FastTimelapseFile)) ? FastTimelapseFile

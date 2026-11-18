@@ -8,6 +8,17 @@ export interface HoleRectDto {
   rotation?: number;
 }
 
+/**
+ * Tỉ lệ rộng / cao của ô nhỏ nhất trong frame (như FavoriCurrent): phần ảnh chụp lọt vào ô khi in.
+ * Trả về undefined nếu frame không có ô hợp lệ.
+ */
+export function smallestHoleAspect(holes?: HoleRectDto[]): number | undefined {
+  const valid = (holes || []).filter((h) => h.w > 0 && h.h > 0);
+  if (valid.length === 0) return undefined;
+  const smallest = valid.reduce((a, b) => (b.w * b.h < a.w * a.h ? b : a));
+  return smallest.w / smallest.h;
+}
+
 export interface PhotoFrameDto {
   id: number;
   layoutId: string;

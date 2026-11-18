@@ -38,50 +38,52 @@ public static class QrCodeRenderer
         return png.ToArray();
     }
 
+    /// <summary>Ma trận của QRCoder có sẵn bấy nhiêu ô lề trắng mỗi phía.</summary>
+    private const int MatrixQuietModules = 4;
+
     /// <summary>
-    /// In mã QR lên ảnh ghép tại vị trí của frame (theo % như CMS: tâm qrX/qrY so với chiều rộng/cao, cạnh qrSize so với chiều rộng),
-    /// kèm một dòng chú thích nhỏ bên dưới nếu có. Ghi ra <paramref name="outputPath"/> (JPEG 95).
+    /// Lề trắng giữ lại quanh mã khi in lên ảnh ghép. Chuẩn là 4 ô; dùng 2 ô để phần mã đen to hơn trong ô QR của frame
+    /// (máy quét điện thoại vẫn đọc được trên nền trắng). Tăng lên nếu thấy khó quét.
     /// </summary>
-    public static void StampOnImage(string imagePath, string outputPath, string text, double xPct, double yPct, double sizePct, string? caption)
+    private const int StampQuietModules = 2;
+
+    /// <summary>
+    /// In mã QR lên ảnh ghép tại ô QR của frame (theo % như CMS: tâm qrX/qrY so với chiều rộng/cao, cạnh qrSize so với chiều rộng).
+    /// Hộp trắng chứa mã phủ kín đúng ô QR (không thu nhỏ theo số ô), các ô đen chia đều trong hộp và làm tròn theo px
+    /// để cạnh ô sắc nét khi in. Ghi ra <paramref name="outputPath"/> (JPEG 95).
+    /// </summary>
+    public static void StampOnImage(string imagePath, string outputPath, string text, double xPct, double yPct, double sizePct)
     {
         using var bitmap = SKBitmap.Decode(imagePath) ?? throw new InvalidDataException($"Không đọc được ảnh: {imagePath}");
         var m = Matrix(text);
         int n = m.GetLength(0);
+        int core = n - 2 * MatrixQuietModules;
+        int total = core + 2 * StampQuietModules;
 
         float side = (float)(Math.Clamp(sizePct, 3, 60) / 100.0 * bitmap.Width);
-        // Mỗi ô là số nguyên px để máy in không làm nhoè cạnh ô
-        int module = Math.Max(2, (int)Math.Floor(side / n));
-        float qrSide = module * n;
         float cx = (float)(Math.Clamp(xPct, 0, 100) / 100.0 * bitmap.Width);
         float cy = (float)(Math.Clamp(yPct, 0, 100) / 100.0 * bitmap.Height);
-        float left = MathF.Round(Math.Clamp(cx - qrSide / 2, 0, Math.Max(0, bitmap.Width - qrSide)));
-        float top = MathF.Round(Math.Clamp(cy - qrSide / 2, 0, Math.Max(0, bitmap.Height - qrSide)));
+        float left = MathF.Round(Math.Clamp(cx - side / 2, 0, Math.Max(0, bitmap.Width - side)));
+        float top = MathF.Round(Math.Clamp(cy - side / 2, 0, Math.Max(0, bitmap.Height - side)));
+        float module = side / total;
 
         using (var canvas = new SKCanvas(bitmap))
         {
-            float captionHeight = 0;
-            using var font = new SKFont(SKTypeface.FromFamilyName("Segoe UI", SKFontStyle.Bold) ?? SKTypeface.Default, Math.Max(10, qrSide * 0.075f));
-            if (!string.IsNullOrWhiteSpace(caption))
-            {
-                // Thu nhỏ chữ cho vừa bề ngang mã QR
-                float width = font.MeasureText(caption);
-                if (width > qrSide * 0.96f) font.Size *= qrSide * 0.96f / width;
-                captionHeight = font.Size * 1.2f;
-                top = MathF.Max(0, MathF.Min(top, bitmap.Height - qrSide - captionHeight));
-            }
+            using var white = new SKPaint { Color = SKColors.White, IsAntialias = false };
+            canvas.DrawRect(SKRect.Create(left, top, MathF.Round(left + side) - left, MathF.Round(top + side) - top), white);
 
-            using (var bg = new SKPaint { Color = SKColors.White, IsAntialias = true })
+            using var ink = new SKPaint { Color = SKColors.Black, IsAntialias = false, Style = SKPaintStyle.Fill };
+            for (int y = 0; y < core; y++)
             {
-                canvas.DrawRoundRect(SKRect.Create(left, top, qrSide, qrSide + captionHeight), module, module, bg);
-            }
-            DrawModules(canvas, m, left, top, module);
-
-            if (captionHeight > 0)
-            {
-                using var ink = new SKPaint { Color = SKColors.Black, IsAntialias = true };
-                // Dòng chữ nằm sát dưới phần QR, trong lề trắng 4 ô
-                // (lấn tối đa 1,5 ô vào lề trắng; còn 2,5 ô là đủ cho máy quét)
-                canvas.DrawText(caption!, left + qrSide / 2, top + qrSide - module * 1.5f + font.Size * 0.95f, SKTextAlign.Center, font, ink);
+                float y0 = MathF.Round(top + (y + StampQuietModules) * module);
+                float y1 = MathF.Round(top + (y + StampQuietModules + 1) * module);
+                for (int x = 0; x < core; x++)
+                {
+                    if (!m[x + MatrixQuietModules, y + MatrixQuietModules]) continue;
+                    float x0 = MathF.Round(left + (x + StampQuietModules) * module);
+                    float x1 = MathF.Round(left + (x + StampQuietModules + 1) * module);
+                    canvas.DrawRect(x0, y0, x1 - x0, y1 - y0, ink);
+                }
             }
         }
 

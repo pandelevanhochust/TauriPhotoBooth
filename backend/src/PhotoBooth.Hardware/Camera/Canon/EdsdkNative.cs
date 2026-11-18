@@ -34,8 +34,14 @@ internal static class EdsdkNative
     public const uint SaveTo_Both = 3;
     public const uint EvfOutputDevice_TFT = 1;
     public const uint EvfOutputDevice_PC = 2;
+    /// <summary>Live view ra cả màn hình sau của máy lẫn máy tính (để nút / điều khiển từ xa của máy vẫn chụp được).</summary>
+    public const uint EvfOutputDevice_TFT_PC = 3;
+
+    public const uint CameraState_UILock = 0;
+    public const uint CameraState_UIUnLock = 1;
 
     // --- Lệnh máy ảnh ---
+    public const uint CameraCommand_TakePicture = 0x00000000;
     public const uint CameraCommand_ExtendShutDownTimer = 0x00000001;
     public const uint CameraCommand_PressShutterButton = 0x00000004;
 
@@ -100,6 +106,19 @@ internal static class EdsdkNative
         public int Reset;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+    public struct EdsVolumeInfo
+    {
+        /// <summary>0 = khe trống, 1 = CF, 2 = SD...</summary>
+        public uint StorageType;
+        public uint Access;
+        public ulong MaxCapacity;
+        public ulong FreeSpaceInBytes;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string szVolumeLabel;
+    }
+
+    [DllImport(Dll)] public static extern uint EdsGetVolumeInfo(IntPtr inVolumeRef, out EdsVolumeInfo outVolumeInfo);
     [DllImport(Dll)] public static extern uint EdsInitializeSDK();
     [DllImport(Dll)] public static extern uint EdsTerminateSDK();
     [DllImport(Dll)] public static extern uint EdsRelease(IntPtr inRef);
@@ -118,6 +137,7 @@ internal static class EdsdkNative
     [DllImport(Dll)] public static extern uint EdsSetPropertyData(IntPtr inRef, uint inPropertyID, int inParam, int inPropertySize, ref uint inPropertyData);
 
     [DllImport(Dll)] public static extern uint EdsSendCommand(IntPtr inCameraRef, uint inCommand, int inParam);
+    [DllImport(Dll)] public static extern uint EdsSendStatusCommand(IntPtr inCameraRef, uint inStatusCommand, int inParam);
     [DllImport(Dll)] public static extern uint EdsSetCapacity(IntPtr inCameraRef, EdsCapacity inCapacity);
 
     [DllImport(Dll)] public static extern uint EdsSetObjectEventHandler(IntPtr inCameraRef, uint inEvent, EdsObjectEventHandler? inObjectEventHandler, IntPtr inContext);

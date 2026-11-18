@@ -88,10 +88,6 @@ export const FavoriModeScreen: React.FC<FavoriModeScreenProps> = ({
           </div>
         </div>
       </div>
-
-      <p className="text-sm text-[#6b5b52] text-center">
-        Ảnh được lưu 24 giờ để bạn tải về, sau đó tự động xoá.
-      </p>
     </FavoriLayout>
   );
 };

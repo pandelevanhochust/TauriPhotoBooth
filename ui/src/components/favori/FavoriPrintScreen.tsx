@@ -235,10 +235,10 @@ export const FavoriPrintScreen: React.FC<FavoriPrintScreenProps> = ({
 
   if (status !== 'completed') {
     return (
-      <FavoriLayout stepNumber={10} hideHeader={false}>
-        <div className="flex flex-col items-center justify-center gap-5 w-full max-w-4xl mx-auto my-auto py-2">
+      <FavoriLayout stepNumber={10} hideHeader={false} wide>
+        <div className="flex flex-col items-center justify-center gap-4 w-full max-w-[1500px] mx-auto my-auto py-1">
           {/* Video quá trình vừa chụp, đặt giữa màn hình */}
-          <div className="flex items-center justify-center h-[52vh] w-full">
+          <div className="flex items-center justify-center h-[62vh] w-full">
             {videoUrl ? (
               <video
                 key={videoUrl}
@@ -286,11 +286,11 @@ export const FavoriPrintScreen: React.FC<FavoriPrintScreenProps> = ({
   }
 
   return (
-    <FavoriLayout stepNumber={10} hideHeader={false}>
-      <div className="flex flex-col md:flex-row items-center justify-center gap-10 w-full max-w-5xl mx-auto my-auto py-4">
+    <FavoriLayout stepNumber={10} hideHeader={false} wide>
+      <div className="flex flex-col md:flex-row items-center justify-center gap-20 w-full max-w-[1500px] mx-auto my-auto py-2 px-8">
         {/* Ảnh thành quả, không khung bao */}
         {previewImage && (
-          <div className="flex items-center justify-center h-[62vh]">
+          <div className="flex items-center justify-center h-[70vh]">
             <img
               src={previewImage}
               alt="Ảnh thành quả"
@@ -299,7 +299,7 @@ export const FavoriPrintScreen: React.FC<FavoriPrintScreenProps> = ({
           </div>
         )}
 
-        <div className="flex flex-col items-center justify-center text-center space-y-5 max-w-md">
+        <div className="flex flex-col items-center justify-center text-center space-y-5 w-[440px] flex-shrink-0">
           {printError ? (
             <div className="space-y-3 flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-rose-100 border-2 border-rose-400 flex items-center justify-center text-[#7a0000] shadow-md">
@@ -332,7 +332,7 @@ export const FavoriPrintScreen: React.FC<FavoriPrintScreenProps> = ({
               <img
                 src={qrDataUrl}
                 alt="Mã QR tải ảnh"
-                className="w-56 h-56 bg-white p-2 select-none pointer-events-none"
+                className="w-60 h-60 bg-white p-2 select-none pointer-events-none"
               />
               <p className="font-lobster text-xl text-[#1f1610] leading-snug">Quét mã để tải ảnh và video</p>
               <p className="text-xs text-[#6b5b52] leading-relaxed max-w-xs">
