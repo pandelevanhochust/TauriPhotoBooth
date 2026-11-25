@@ -18,6 +18,7 @@ using PhotoBooth.Hardware.Printer;
 using PhotoBooth.Host.Printing;
 using PhotoBooth.Host.Services;
 using PhotoBooth.Imaging.Compositor;
+using PhotoBooth.Imaging.Filters;
 using PhotoBooth.Imaging.Video;
 using PhotoBooth.Hardware.Camera.Fujifilm;
 
@@ -170,6 +171,8 @@ public partial class MainWindow : Window
                         App.Log($"[WARN] CMS {name} prefetch error: {ex.Message}");
                     }
                 }
+                // Tải sẵn file .cube của các bộ lọc LUT: bước chọn bộ lọc và bản in không phải chờ tải, mất mạng vẫn dùng được
+                await PrefetchLutsAsync();
             });
 
             // Start Watchdog Heartbeat
@@ -204,7 +207,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             App.Log($"[ERROR] MainWindow_Loaded exception: {ex}");
-            MessageBox.Show($"Lỗi khởi tạo Kiosk: {ex.Message}", "HihiBooth Kiosk Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show($"Lỗi khởi tạo Kiosk: {ex.Message}", "FavoriPhoto", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -541,7 +544,7 @@ public partial class MainWindow : Window
         paint.Style = SkiaSharp.SKPaintStyle.Fill;
         using var titleFont = new SkiaSharp.SKFont(SkiaSharp.SKTypeface.FromFamilyName("Segoe UI", SkiaSharp.SKFontStyle.Bold), 84);
         using var textFont = new SkiaSharp.SKFont(SkiaSharp.SKTypeface.FromFamilyName("Segoe UI"), 44);
-        canvas.DrawText("HihiBooth", W / 2f, 220, SkiaSharp.SKTextAlign.Center, titleFont, paint);
+        canvas.DrawText("FavoriPhoto", W / 2f, 220, SkiaSharp.SKTextAlign.Center, titleFont, paint);
         canvas.DrawText("Trang in thu 4x6", W / 2f, 310, SkiaSharp.SKTextAlign.Center, textFont, paint);
         paint.Color = SkiaSharp.SKColors.Black;
         canvas.DrawText(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), W / 2f, 1180, SkiaSharp.SKTextAlign.Center, textFont, paint);
@@ -723,6 +726,28 @@ public partial class MainWindow : Window
                     {
                         App.Log($"[ERROR] get_presets IPC error: {ex.Message}");
                         SendErrorResponse(id, ex.Message);
+                    }
+                    break;
+
+                case "get_lut":
+                    {
+                        // UI xem trước bộ lọc LUT: LUT đã đọc sẵn, dạng nhị phân gọn (tải file .cube về LutCache một lần)
+                        string lutUrl = payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty("url", out var luEl) ? luEl.GetString() ?? "" : "";
+                        string? lutFile = await EnsureLocalLutAsync(lutUrl);
+                        if (lutFile == null)
+                        {
+                            SendErrorResponse(id, "Không tải được file LUT");
+                            break;
+                        }
+                        try
+                        {
+                            SendSuccessResponse(id, await GetLutPayloadAsync(lutFile));
+                        }
+                        catch (Exception ex) when (ex is IOException or InvalidDataException or FormatException)
+                        {
+                            App.Log($"[WARN] LUT {Path.GetFileName(lutFile)} không đọc được: {ex.Message}");
+                            SendErrorResponse(id, "File LUT không hợp lệ");
+                        }
                     }
                     break;
 
@@ -953,6 +978,13 @@ public partial class MainWindow : Window
                     }
                     break;
 
+                case "refresh_cms":
+                    // Hết phiên, quay về màn chào: hỏi server frame và bộ lọc ngầm (layout giữ nguyên suốt lần chạy),
+                    // tải sẵn ảnh frame / file LUT mới để khách sau thấy ngay bản mới
+                    SendSuccessResponse(id, new { started = true });
+                    _ = RefreshCmsAfterSessionAsync();
+                    break;
+
                 case "start_capture_session":
                     _currentSessionId = $"SESSION_{DateTime.UtcNow:yyyyMMdd_HHmmss}_{Guid.NewGuid().ToString("N")[..6]}";
                     string commonData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data", "Sessions", _currentSessionId);
@@ -1049,7 +1081,7 @@ public partial class MainWindow : Window
                         c.Clear(SkiaSharp.SKColors.Ivory);
                         using var paint = new SkiaSharp.SKPaint { Color = SkiaSharp.SKColors.DarkRed, IsAntialias = true };
                         using var font = new SkiaSharp.SKFont(SkiaSharp.SKTypeface.Default, 44);
-                        c.DrawText($"HihiBooth Photo #{shotIndex}", 250, 420, SkiaSharp.SKTextAlign.Left, font, paint);
+                        c.DrawText($"FavoriPhoto #{shotIndex}", 250, 420, SkiaSharp.SKTextAlign.Left, font, paint);
                         using var img = surface.Snapshot();
                         using var data = img.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, 90);
                         using var fs = File.OpenWrite(fallbackShot);
@@ -1107,6 +1139,9 @@ public partial class MainWindow : Window
 
                     // Check overlay frame image (download or local cache)
                     template.OverlayImagePath = await EnsureLocalFrameAsync(frameUrl) ?? string.Empty;
+
+                    // Bộ lọc lấy đúng preset trên CMS (CSS hoặc LUT .cube) để bản in khớp bản xem trước
+                    template.Filter = await ResolvePhotoFilterAsync(filterCode);
 
                     // Phóng to / độ lệch của từng ô do người dùng chỉnh ở bước chọn ảnh
                     if (payload.TryGetProperty("transforms", out var transformsEl) && transformsEl.ValueKind == JsonValueKind.Array)
@@ -1458,6 +1493,148 @@ public partial class MainWindow : Window
         return holes;
     }
 
+    /// <summary>
+    /// Bộ lọc của preset có mã <paramref name="filterCode"/> (danh sách preset đã lấy từ CMS, trong bộ nhớ hoặc file dự phòng).
+    /// Preset LUT thì tải file .cube về máy. Null nếu không tìm thấy preset: compositor dùng bảng mã cũ.
+    /// </summary>
+    private async Task<PhotoFilterSpec?> ResolvePhotoFilterAsync(string filterCode)
+    {
+        if (string.IsNullOrWhiteSpace(filterCode)) return null;
+        string? json = _cmsJsonCache.TryGetValue("presets", out var mem) ? mem : null;
+        if (string.IsNullOrEmpty(json))
+        {
+            string cacheFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data", "cached_presets.json");
+            try { if (File.Exists(cacheFile)) json = await File.ReadAllTextAsync(cacheFile); } catch { }
+        }
+        if (string.IsNullOrEmpty(json)) return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var preset = PhotoFilterSpec.FindPreset(doc.RootElement, filterCode);
+            if (preset == null) return null;
+            // Preset có nhưng không đổi ảnh (ảnh gốc): trả về bộ lọc rỗng để không rơi về bảng mã cũ
+            var spec = PhotoFilterSpec.FromPreset(preset.Value) ?? new PhotoFilterSpec();
+            if (spec.LutUrl != null)
+            {
+                spec.LutPath = await EnsureLocalLutAsync(spec.LutUrl);
+                if (spec.LutPath == null) App.Log($"[WARN] Không tải được LUT của bộ lọc {filterCode}: {spec.LutUrl}");
+            }
+            App.Log($"[INFO] Filter {filterCode}: {(spec.LutUrl != null ? $"LUT {Path.GetFileName(spec.LutPath ?? spec.LutUrl)} x{spec.LutIntensity:0.##}" : spec.HasColorAdjust ? "CSS" : "none")}");
+            return spec;
+        }
+        catch (JsonException ex)
+        {
+            App.Log($"[WARN] Đọc preset bộ lọc {filterCode} thất bại: {ex.Message}");
+            return null;
+        }
+    }
+
+    // LUT đã đọc, gửi cho UI (theo file trong LutCache): mỗi bộ lọc chỉ đọc file .cube một lần mỗi lần chạy app
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Lazy<Task<object>>> _lutPayloads = new(StringComparer.OrdinalIgnoreCase);
+
+    private static async Task<object> GetLutPayloadAsync(string lutFile)
+    {
+        var lazy = _lutPayloads.GetOrAdd(lutFile, path => new Lazy<Task<object>>(() => Task.Run<object>(() =>
+        {
+            var lut = CubeLut.Load(path);
+            return new
+            {
+                size = lut.Size,
+                domainMin = lut.DomainMin,
+                domainMax = lut.DomainMax,
+                data16 = Convert.ToBase64String(lut.ToUInt16Bytes()),
+            };
+        })));
+        try
+        {
+            return await lazy.Value;
+        }
+        catch
+        {
+            // Lỗi thì không giữ lại, lần sau đọc lại
+            _lutPayloads.TryRemove(lutFile, out _);
+            throw;
+        }
+    }
+
+    /// <summary>Tải sẵn file .cube của mọi bộ lọc LUT trong danh sách preset đang có.</summary>
+    private static async Task PrefetchLutsAsync()
+    {
+        try
+        {
+            if (!_cmsJsonCache.TryGetValue("presets", out var json) || string.IsNullOrEmpty(json)) return;
+            var urls = new List<string>();
+            using (var doc = JsonDocument.Parse(json))
+            {
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var preset in doc.RootElement.EnumerateArray())
+                {
+                    if (preset.ValueKind == JsonValueKind.Object
+                        && preset.TryGetProperty("lutUrl", out var u)
+                        && u.ValueKind == JsonValueKind.String
+                        && PhotoFilterSpec.IsCubeUrl(u.GetString()))
+                    {
+                        urls.Add(u.GetString()!);
+                    }
+                }
+            }
+            int ok = 0;
+            foreach (var url in urls)
+            {
+                string? file = await EnsureLocalLutAsync(url);
+                if (file == null) continue;
+                try
+                {
+                    // Đọc sẵn thành dữ liệu gửi UI: UI hỏi lúc khởi động hay ở bước chọn bộ lọc đều trả ngay
+                    await GetLutPayloadAsync(file);
+                    ok++;
+                }
+                catch (Exception ex)
+                {
+                    App.Log($"[WARN] LUT {Path.GetFileName(file)} không đọc được: {ex.Message}");
+                }
+            }
+            App.Log($"[INFO] LUT prefetch: {ok}/{urls.Count} bộ lọc LUT sẵn trên máy.");
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WARN] LUT prefetch error: {ex.Message}");
+        }
+    }
+
+    /// <summary>File .cube trên máy: tải về LutCache theo tên file (tên có mốc thời gian nên đổi file là đổi tên). Null nếu không lấy được.</summary>
+    private static async Task<string?> EnsureLocalLutAsync(string lutUrl)
+    {
+        if (!PhotoFilterSpec.IsCubeUrl(lutUrl)
+            || !Uri.TryCreate(lutUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return null;
+        }
+        try
+        {
+            string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "HihiBooth", "Data", "LutCache");
+            Directory.CreateDirectory(cacheDir);
+            string localFile = Path.Combine(cacheDir, Path.GetFileName(uri.AbsolutePath));
+            if (!File.Exists(localFile))
+            {
+                using var hc = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                string text = await hc.GetStringAsync(uri);
+                // Tên tạm riêng: UI và bản in có thể cùng tải một file lúc đầu
+                string tmp = $"{localFile}.{Guid.NewGuid():N}.tmp";
+                await File.WriteAllTextAsync(tmp, text);
+                File.Move(tmp, localFile, overwrite: true);
+            }
+            return localFile;
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WARN] Could not fetch LUT {lutUrl}: {ex.Message}");
+            return null;
+        }
+    }
+
     /// <summary>Trả về đường dẫn frame PNG trên máy: dùng file sẵn có hoặc tải về FramesCache. Null nếu không lấy được.</summary>
     private static async Task<string?> EnsureLocalFrameAsync(string frameUrl)
     {
@@ -1479,7 +1656,8 @@ public partial class MainWindow : Window
             {
                 using var hc = new HttpClient();
                 var fBytes = await hc.GetByteArrayAsync(uri);
-                string tmp = localFile + ".tmp";
+                // Tên tạm riêng: tải sẵn cuối phiên và bản in có thể cùng tải một frame
+                string tmp = $"{localFile}.{Guid.NewGuid():N}.tmp";
                 await File.WriteAllBytesAsync(tmp, fBytes);
                 File.Move(tmp, localFile, overwrite: true);
             }
@@ -1589,6 +1767,9 @@ public partial class MainWindow : Window
             {
                 App.Log($"[INFO] CMS {key} changed on server, notifying UI");
                 PostEventToWeb("cms_updated", new { key });
+                // Bộ lọc mới / đổi file LUT, frame mới: tải sẵn luôn
+                if (key == "presets") _ = PrefetchLutsAsync();
+                if (key == "frames") _ = PrefetchFrameFilesAsync();
             }
         }
         catch (Exception ex)
@@ -1600,6 +1781,62 @@ public partial class MainWindow : Window
             _cmsRefreshing.TryRemove(key, out _);
         }
     }
+    /// <summary>
+    /// Làm mới frame và bộ lọc lúc hết phiên (máy đang rảnh). Có thay đổi thì UI được báo qua <c>cms_updated</c>
+    /// và file mới được tải sẵn (RefreshCmsInBackgroundAsync). Mất mạng thì giữ bản đã lưu như cũ.
+    /// </summary>
+    private async Task RefreshCmsAfterSessionAsync()
+    {
+        foreach (var (key, url) in new[] { ("frames", FramesCmsUrl), ("presets", PresetsCmsUrl) })
+        {
+            string shown = _cmsJsonCache.TryGetValue(key, out var mem) ? mem ?? string.Empty : string.Empty;
+            await RefreshCmsInBackgroundAsync(key, url, shown);
+        }
+        // Frame thiếu file trên máy (tải hỏng lần trước...): bổ sung luôn, kể cả khi danh sách không đổi
+        await PrefetchFrameFilesAsync();
+    }
+
+    /// <summary>Tải sẵn file PNG của mọi frame trong danh sách đang có (dùng khi in), bỏ qua file đã có.</summary>
+    private static async Task PrefetchFrameFilesAsync()
+    {
+        try
+        {
+            if (!_cmsJsonCache.TryGetValue("frames", out var json) || string.IsNullOrEmpty(json)) return;
+            var urls = new List<string>();
+            using (var doc = JsonDocument.Parse(json))
+            {
+                if (doc.RootElement.ValueKind != JsonValueKind.Array) return;
+                foreach (var frame in doc.RootElement.EnumerateArray())
+                {
+                    if (frame.ValueKind != JsonValueKind.Object
+                        || !frame.TryGetProperty("frameUrl", out var u)
+                        || u.ValueKind != JsonValueKind.String
+                        || string.IsNullOrWhiteSpace(u.GetString()))
+                    {
+                        continue;
+                    }
+                    string url = u.GetString()!;
+                    // Giống UI: đường dẫn tương đối thì ghép với địa chỉ CMS
+                    if (!url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    {
+                        url = CmsBaseUrl + (url.StartsWith('/') ? "" : "/") + url;
+                    }
+                    urls.Add(url);
+                }
+            }
+            int ok = 0;
+            foreach (var url in urls)
+            {
+                if (await EnsureLocalFrameAsync(url) != null) ok++;
+            }
+            App.Log($"[INFO] Frame prefetch: {ok}/{urls.Count} frame sẵn trên máy.");
+        }
+        catch (Exception ex)
+        {
+            App.Log($"[WARN] Frame prefetch error: {ex.Message}");
+        }
+    }
+
     private Task<string> GetOrFetchLayoutsJsonAsync() => GetOrFetchCmsJsonAsync("layouts", "/api/layouts?onlyActive=false");
 
     private void SendRawSuccessResponse(string id, string rawJsonData)

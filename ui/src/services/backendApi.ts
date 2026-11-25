@@ -1,4 +1,5 @@
 import { ipc } from './ipc';
+import { isCubeUrl } from './lut';
 
 export interface HoleRectDto {
   x: number;
@@ -58,6 +59,10 @@ export interface FilterOption {
   name: string;
   cssFilter: string;
   thumbnailUrl?: string;
+  /** Bộ lọc LUT: file .cube trên CMS (khi có thì cssFilter = 'none'). */
+  lutUrl?: string;
+  /** Độ mạnh LUT 0..1 (texture.opacity / 100, không có thì intensityDefault). */
+  lutIntensity?: number;
 }
 
 export interface FrameOption {
@@ -176,6 +181,22 @@ export function convertFilterConfigToCss(configJson?: string | null): string {
   try {
     const parsed = typeof configJson === 'string' ? JSON.parse(configJson) : configJson;
     const filters: string[] = [];
+
+    // Định dạng mới của CMS: {"mode":"css","css":{"brightness":100,...}} (đơn vị %, hueRotate theo độ)
+    if (parsed && parsed.mode === 'css' && parsed.css && typeof parsed.css === 'object') {
+      const c = parsed.css;
+      const pct = (v: unknown, def: number) => (typeof v === 'number' && Number.isFinite(v) ? v : def);
+      // Cùng thứ tự với định dạng cũ bên dưới và với host (CssColorMatrix)
+      if (pct(c.grayscale, 0) !== 0) filters.push(`grayscale(${pct(c.grayscale, 0)}%)`);
+      if (pct(c.sepia, 0) !== 0) filters.push(`sepia(${pct(c.sepia, 0)}%)`);
+      if (pct(c.contrast, 100) !== 100) filters.push(`contrast(${pct(c.contrast, 100)}%)`);
+      if (pct(c.brightness, 100) !== 100) filters.push(`brightness(${pct(c.brightness, 100)}%)`);
+      if (pct(c.saturate, 100) !== 100) filters.push(`saturate(${pct(c.saturate, 100)}%)`);
+      if (pct(c.hueRotate, 0) !== 0) filters.push(`hue-rotate(${pct(c.hueRotate, 0)}deg)`);
+      return filters.length > 0 ? filters.join(' ') : 'none';
+    }
+    // "texture" (LUT / ảnh texture) không phải CSS filter
+    if (parsed && parsed.mode === 'texture') return 'none';
 
     if (typeof parsed.grayscale === 'number') {
       filters.push(`grayscale(${parsed.grayscale})`);
@@ -379,13 +400,35 @@ export const backendApi = {
     }
 
     if (rawData && rawData.length > 0) {
-      return rawData.map((item) => ({
-        id: item.code || String(item.id),
-        code: item.code,
-        name: item.name,
-        cssFilter: convertFilterConfigToCss(item.configJson),
-        thumbnailUrl: item.thumbnailUrl || undefined,
-      }));
+      return rawData.map((item) => {
+        // Bộ lọc LUT (.cube): độ mạnh lấy từ texture.opacity như trang CMS, không có thì intensityDefault
+        if (isCubeUrl(item.lutUrl)) {
+          let opacity: number | undefined;
+          try {
+            const cfg = item.configJson ? JSON.parse(item.configJson) : null;
+            if (cfg && typeof cfg.texture?.opacity === 'number') opacity = cfg.texture.opacity / 100;
+          } catch {
+            opacity = undefined;
+          }
+          const intensity = opacity ?? (typeof item.intensityDefault === 'number' ? item.intensityDefault : 1);
+          return {
+            id: item.code || String(item.id),
+            code: item.code,
+            name: item.name,
+            cssFilter: 'none',
+            thumbnailUrl: item.thumbnailUrl || undefined,
+            lutUrl: item.lutUrl || undefined,
+            lutIntensity: Math.min(1, Math.max(0, intensity)),
+          };
+        }
+        return {
+          id: item.code || String(item.id),
+          code: item.code,
+          name: item.name,
+          cssFilter: convertFilterConfigToCss(item.configJson),
+          thumbnailUrl: item.thumbnailUrl || undefined,
+        };
+      });
     }
 
     return FALLBACK_PRESETS;

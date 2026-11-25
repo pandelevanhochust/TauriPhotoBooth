@@ -67,6 +67,8 @@ export const FavoriFrameScreen: React.FC<FavoriFrameScreenProps> = ({
 
   const hasSelection = frames.some((f) => f.id === selectedFrame);
   const aspectRatio = layout ? `${layout.widthPx} / ${layout.heightPx}` : '2 / 3';
+  // Frame dải (1x4, tỉ lệ 1:3) rất hẹp: hiển thị cao hơn để khách nhìn rõ
+  const isStrip = !!layout && layout.widthPx > 0 && layout.heightPx / layout.widthPx >= 2;
 
   return (
     <FavoriLayout
@@ -90,7 +92,8 @@ export const FavoriFrameScreen: React.FC<FavoriFrameScreenProps> = ({
           </span>
         </div>
       ) : (
-        <div className="w-full h-full overflow-y-auto px-6 py-4">
+        // containerType 'size': chiều cao frame dải tính theo chính vùng cuộn (100cqh = phần nhìn thấy, trừ padding)
+        <div className="w-full h-full overflow-y-auto px-6 py-4" style={{ containerType: 'size' }}>
           <div className="flex flex-wrap items-start justify-center gap-x-8 gap-y-6 max-w-[1400px] mx-auto">
             {frames.map((frame) => {
               const isSelected = selectedFrame === frame.id;
@@ -114,8 +117,13 @@ export const FavoriFrameScreen: React.FC<FavoriFrameScreenProps> = ({
                   <img
                     src={frame.thumbnailUrl || frame.frameUrl}
                     alt=""
-                    style={{ aspectRatio: `auto ${aspectRatio}` }}
-                    className="block h-[34vh] min-h-[220px] w-auto max-w-full pointer-events-none select-none"
+                    style={{
+                      aspectRatio: `auto ${aspectRatio}`,
+                      // Frame dải 2x6: vùng nhìn thấy chứa đúng 2,25 hàng (2 hàng đủ + 1/4 hàng thứ ba gợi ý lướt xuống);
+                      // 1.5rem = khoảng cách giữa các hàng (gap-y-6)
+                      height: isStrip ? 'calc((100cqh - 2 * 1.5rem) / 2.25)' : undefined,
+                    }}
+                    className={`block ${isStrip ? '' : 'h-[34vh] min-h-[220px]'} w-auto max-w-full pointer-events-none select-none`}
                     loading="lazy"
                     onError={(e) => {
                       const img = e.currentTarget;

@@ -218,15 +218,16 @@ public sealed class WindowsPrinterService : IPrinterService
     private static bool IsStripQueueName(string name) =>
         Regex.IsMatch(name, @"2\s*x\s*6|6\s*x\s*2|strip|cut", RegexOptions.IgnoreCase);
 
-    /// <summary>Hàng đợi riêng cho dải ảnh (preset cắt đặt sẵn): cùng cổng USB với máy in chính thì ưu tiên.</summary>
+    /// <summary>Hàng đợi riêng cho dải ảnh (preset cắt đặt sẵn), phải cùng cổng USB với máy in chính.</summary>
     private static PrinterQueueInfo? FindStripQueue(IReadOnlyList<PrinterQueueInfo> queues, PrinterQueueInfo main)
     {
         if (IsStripQueueName(main.Name)) return main;
         var candidates = queues
             .Where(q => !q.IsVirtual && !string.Equals(q.Name, main.Name, StringComparison.OrdinalIgnoreCase) && IsStripQueueName(q.Name))
             .ToList();
-        return candidates.FirstOrDefault(q => string.Equals(q.Port, main.Port, StringComparison.OrdinalIgnoreCase))
-            ?? candidates.FirstOrDefault(q => q.IsPhotoPrinter);
+        // Chỉ nhận hàng đợi cùng cổng với máy in chính: hàng đợi khác cổng là một máy in khác (vd. máy laser),
+        // in dải sang đó sẽ ra nhầm máy
+        return candidates.FirstOrDefault(q => string.Equals(q.Port, main.Port, StringComparison.OrdinalIgnoreCase));
     }
 
     private List<PrinterQueueInfo> ListQueues()
@@ -407,7 +408,7 @@ public sealed class WindowsPrinterService : IPrinterService
         // Mỗi tờ 4x6 cắt ra hai dải
         int sheets = needsCut ? (copies + 1) / 2 : copies;
 
-        using var doc = new PrintDocument { DocumentName = $"HihiBooth {jobId}", PrintController = new StandardPrintController() };
+        using var doc = new PrintDocument { DocumentName = $"FavoriPhoto {jobId}", PrintController = new StandardPrintController() };
         doc.PrinterSettings.PrinterName = printerName;
         if (!doc.PrinterSettings.IsValid) throw new InvalidPrinterException(doc.PrinterSettings);
 

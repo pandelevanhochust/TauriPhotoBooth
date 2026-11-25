@@ -15,10 +15,10 @@ public class Program
 
     public static async Task Main(string[] args)
     {
-        Console.Title = "HihiBooth Kiosk Watchdog Supervisor";
+        Console.Title = "FavoriPhoto Watchdog";
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("=================================================");
-        Console.WriteLine("     HIHIBOOTH KIOSK WATCHDOG SUPERVISOR         ");
+        Console.WriteLine("          FAVORIPHOTO WATCHDOG                   ");
         Console.WriteLine("=================================================");
         Console.ResetColor();
 

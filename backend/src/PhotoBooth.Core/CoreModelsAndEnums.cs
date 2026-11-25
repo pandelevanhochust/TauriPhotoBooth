@@ -242,6 +242,8 @@ namespace PhotoBooth.Core.Models
         public int Dpi { get; set; } = 300;
         public string OverlayImagePath { get; set; } = string.Empty;
         public string FilterCode { get; set; } = string.Empty;
+        /// <summary>Bộ lọc đọc từ preset trên CMS (null = dùng bảng mã cũ theo FilterCode).</summary>
+        public PhotoFilterSpec? Filter { get; set; }
         public List<HoleLocation> Holes { get; set; } = new();
     }
 

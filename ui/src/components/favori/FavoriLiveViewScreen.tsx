@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Camera } from 'lucide-react';
+import { Camera, RotateCcw } from 'lucide-react';
 import { ipc } from '../../services/ipc';
 import { cameraApi } from '../../services/camera';
 import { useCountdown } from '../../hooks/useCountdown';
@@ -17,6 +17,15 @@ const TIMELAPSE_FRAME_WIDTH = 1280;
 
 // Rời bước chụp: chờ tối đa bấy lâu cho các ảnh còn đang tải từ máy ảnh về
 const PENDING_SHOTS_TIMEOUT_MS = 12000;
+// Thông báo "chụp lại" hiện bấy lâu trong khung ngắm
+const RETAKE_NOTICE_MS = 5000;
+
+// Ảnh vừa chụp hiện trong khung ngắm tối thiểu bấy lâu (máy ảnh chưa truyền xong thì hiện tới khi live view chạy lại)
+const REVIEW_MS = 1000;
+// Ảnh xem lại giữ tối đa bấy lâu dù máy ảnh chưa truyền xong / live view chưa chạy lại (chế độ tự động cũng đếm tiếp)
+const REVIEW_WAIT_MAX_MS = 6000;
+// Live view coi như đã chạy lại khi nhận đủ số khung mới này sau khi ảnh truyền xong (~0,1 giây ở 30 khung/giây)
+const LIVE_RESUME_FRAMES = 3;
 
 /**
  * Phím do nút bấm rời gửi tới (nút USB, bút trình chiếu, remote Bluetooth chụp ảnh đều giả lập bàn phím).
@@ -110,7 +119,8 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
   const [isFlashing, setIsFlashing] = useState<boolean>(false);
   const [cameraReady, setCameraReady] = useState<boolean>(false);
   const [source, setSource] = useState<CameraSource>('detecting');
-  const [captureError, setCaptureError] = useState<string | null>(null);
+  // Thông báo tấm vừa chụp bị bỏ, khách phải chụp lại tấm đó
+  const [captureError, setCaptureError] = useState<{ shot: number; reason: string } | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -130,6 +140,76 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
   const finishedRef = useRef<boolean>(false);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Ảnh vừa chụp đang xem lại trong khung ngắm (null = đang hiện live view)
+  const [reviewPhoto, setReviewPhoto] = useState<string | null>(null);
+  const reviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mã tấm đang xem lại
+  const reviewSeqRef = useRef<number | null>(null);
+  // Việc chờ ảnh xem lại xong (chế độ tự động: bắt đầu đếm tấm sau)
+  const afterReviewRef = useRef<(() => void) | null>(null);
+
+  const runAfterReview = () => {
+    const next = afterReviewRef.current;
+    afterReviewRef.current = null;
+    next?.();
+  };
+
+  const reviewSafetyRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Đã đủ thời gian xem tối thiểu (REVIEW_MS) chưa
+  const reviewMinDoneRef = useRef(false);
+  // Số khung live view mới nhận được kể từ khi ảnh của tấm đang xem lại truyền xong
+  const freshFramesRef = useRef(0);
+  // Thời điểm bắt đầu hiện ảnh xem lại (tấm cuối: giữ đủ REVIEW_MS rồi mới sang bước sau)
+  const reviewShownAtRef = useRef(0);
+
+  const clearReviewTimers = () => {
+    if (reviewTimerRef.current) clearTimeout(reviewTimerRef.current);
+    if (reviewSafetyRef.current) clearTimeout(reviewSafetyRef.current);
+    reviewTimerRef.current = null;
+    reviewSafetyRef.current = null;
+  };
+
+  /** Gỡ ảnh xem lại ngay, rồi chạy việc đang chờ (chế độ tự động: bắt đầu đếm tấm sau). */
+  const hideReview = () => {
+    clearReviewTimers();
+    reviewSeqRef.current = null;
+    reviewMinDoneRef.current = false;
+    setReviewPhoto(null);
+    runAfterReview();
+  };
+
+  /**
+   * Gỡ ảnh xem lại khi: đã xem đủ REVIEW_MS, ảnh của tấm đó đã truyền xong, và live view đã có khung mới.
+   * Máy ảnh không gửi khung live view trong lúc lấy nét / nhả màn trập / truyền ảnh (1–3 giây), nên gỡ sớm hơn sẽ lộ
+   * khung hình đứng yên. Webcam không phải chờ.
+   */
+  const tryEndReview = () => {
+    const seq = reviewSeqRef.current;
+    // Đã chụp đủ: giữ ảnh tấm cuối tới khi sang bước sau, không quay lại live view
+    if (seq === null || !reviewMinDoneRef.current || finishedRef.current) return;
+    const waitingCamera =
+      sourceRef.current === 'dslr' && (pendingRef.current.has(seq) || freshFramesRef.current < LIVE_RESUME_FRAMES);
+    if (!waitingCamera) hideReview();
+  };
+
+  /** Hiện ảnh vừa chụp trong khung ngắm (xem tryEndReview để biết khi nào gỡ). */
+  const showReview = (photo: string, seq: number) => {
+    clearReviewTimers();
+    reviewSeqRef.current = seq;
+    reviewMinDoneRef.current = false;
+    freshFramesRef.current = 0;
+    reviewShownAtRef.current = Date.now();
+    setReviewPhoto(photo);
+    reviewTimerRef.current = setTimeout(() => {
+      reviewMinDoneRef.current = true;
+      tryEndReview();
+    }, REVIEW_MS);
+    // Máy ảnh không truyền xong / live view không chạy lại: vẫn gỡ để khách không bị kẹt
+    reviewSafetyRef.current = setTimeout(() => {
+      if (reviewSeqRef.current === seq && !finishedRef.current) hideReview();
+    }, REVIEW_WAIT_MAX_MS);
+  };
+
   // Có máy ảnh Canon thì dùng máy ảnh, không thì webcam; đổi theo khi cắm / rút máy giữa chừng
   useEffect(() => {
     let active = true;
@@ -143,6 +223,8 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
       active = false;
       unlisten();
       if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+      if (reviewTimerRef.current) clearTimeout(reviewTimerRef.current);
+      if (reviewSafetyRef.current) clearTimeout(reviewSafetyRef.current);
     };
   }, []);
 
@@ -192,6 +274,12 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
         liveFrameRef.current = frame;
         // Gán thẳng vào thẻ ảnh: ~30 khung/giây mà không vẽ lại cả màn hình
         if (liveImgRef.current) liveImgRef.current.src = frame;
+        // Đang xem lại một tấm: đếm khung mới sau khi ảnh tấm đó truyền xong, đủ thì gỡ ảnh xem lại
+        const seq = reviewSeqRef.current;
+        if (seq !== null && !pendingRef.current.has(seq)) {
+          freshFramesRef.current += 1;
+          if (freshFramesRef.current >= LIVE_RESUME_FRAMES) tryEndReview();
+        }
         if (!gotFrame) {
           gotFrame = true;
           setCameraReady(true);
@@ -208,6 +296,8 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
 
   const settlePending = (seq: number) => {
     pendingRef.current.delete(seq);
+    // Ảnh của tấm đang xem lại vừa truyền xong: chỉ tính các khung live view từ lúc này
+    if (reviewSeqRef.current === seq) freshFramesRef.current = 0;
     if (pendingRef.current.size === 0) {
       const waiters = pendingWaitersRef.current;
       pendingWaitersRef.current = [];
@@ -237,7 +327,9 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
         pathsRef.current = pathsRef.current.filter((_, i) => i !== idx);
         seqsRef.current = seqsRef.current.filter((_, i) => i !== idx);
         setShotsTaken(photosRef.current.length);
-        showCaptureError(`Tấm vừa chụp bị lỗi: ${shot.message}`);
+        if (reviewSeqRef.current === shot.shotIndex) hideReview();
+        else runAfterReview(); // không có ảnh để xem lại: đếm tấm sau luôn
+        showCaptureError(shot.message);
       }
       settlePending(shot.shotIndex);
     });
@@ -307,6 +399,12 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
     setIsFinished(true);
     setCountdown(null);
 
+    // Tấm cuối cũng được giữ hình REVIEW_MS như các tấm trước rồi mới sang bước sau
+    if (reviewSeqRef.current !== null) {
+      const remaining = REVIEW_MS - (Date.now() - reviewShownAtRef.current);
+      if (remaining > 0) await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+    }
+
     // Chờ các ảnh còn đang tải từ máy ảnh về (tấm nào quá hạn thì giữ ảnh tạm)
     if (pendingRef.current.size > 0) {
       setIsSaving(true);
@@ -320,10 +418,12 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
     setTimeout(() => onAllShotsCaptured(photos, paths), 300);
   }, [onAllShotsCaptured]);
 
+  /** Báo khách tấm vừa chụp không dùng được và sẽ chụp lại (gọi sau khi đã bỏ tấm lỗi khỏi danh sách). */
   const showCaptureError = (message: string) => {
-    setCaptureError(message);
+    const reason = message.trim() || 'Máy ảnh gặp sự cố.';
+    setCaptureError({ shot: photosRef.current.length + 1, reason });
     if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    errorTimerRef.current = setTimeout(() => setCaptureError(null), 5000);
+    errorTimerRef.current = setTimeout(() => setCaptureError(null), RETAKE_NOTICE_MS);
   };
 
   /**
@@ -335,6 +435,8 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
 
     const run = async (): Promise<string[]> => {
       const shotIndex = nextSeqRef.current++;
+      // Tấm mới: ẩn ảnh xem lại của tấm trước để khách thấy live view
+      hideReview();
       const fromDslr = sourceRef.current === 'dslr';
       setIsCapturing(true);
       setIsFlashing(true);
@@ -350,13 +452,17 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
         canvas.height = video.videoHeight;
         const ctx = canvas.getContext('2d');
         if (ctx) {
-          // Lật gương để ảnh in giống hình khách thấy trên màn hình
-          ctx.translate(canvas.width, 0);
-          ctx.scale(-1, 1);
+          // Không lật: ảnh và live view đều theo đúng chiều thật
           ctx.drawImage(video, 0, 0);
           photoData = canvas.toDataURL('image/jpeg', 0.95);
         }
       }
+
+      // Hiện ngay khoảnh khắc vừa bấm trong REVIEW_MS (webcam: chính ảnh chụp; máy ảnh: khung live view đúng lúc bấm).
+      // Trong lúc máy lấy nét / nhả màn trập / truyền ảnh, live view không có khung mới nên nếu không phủ lên thì màn
+      // hình trông như bị đơ. Ảnh thật tải về sau chỉ được lưu lại, không hiện chen vào nữa.
+      const snapshot = fromDslr ? liveFrameRef.current : photoData;
+      if (snapshot && !finishedRef.current) showReview(snapshot, shotIndex);
 
       let pending = false;
       try {
@@ -371,7 +477,8 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
         const message = e instanceof Error ? e.message : String(e);
         console.warn('[FavoriLiveViewScreen] capture_shot failed:', message);
         if (fromDslr && !mustProduce) {
-          showCaptureError(`Chụp chưa được: ${message}`);
+          hideReview();
+          showCaptureError(message);
           setIsCapturing(false);
           return photosRef.current;
         }
@@ -379,7 +486,11 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
 
       if (!photoData) photoData = liveFrameRef.current || placeholderShot(shotIndex);
 
-      if (pending) pendingRef.current.add(shotIndex);
+      if (pending) {
+        pendingRef.current.add(shotIndex);
+        // Khung live view nhận trước lúc này là khung cũ (trước khi máy truyền ảnh), không tính
+        if (reviewSeqRef.current === shotIndex) freshFramesRef.current = 0;
+      }
       photosRef.current = [...photosRef.current, photoData];
       pathsRef.current = [...pathsRef.current, filePath];
       seqsRef.current = [...seqsRef.current, shotIndex];
@@ -405,8 +516,28 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
       return () => clearTimeout(timer);
     }
     captureOne().then((photos) => {
-      if (photos.length >= totalShots) finish();
-      else if (!finishedRef.current) setCountdown(countdownSec);
+      if (photos.length >= totalShots) {
+        finish();
+        return;
+      }
+      if (finishedRef.current) return;
+      // Chỉ đếm tấm sau khi ảnh vừa chụp hiện xong và khách đã thấy lại live view
+      const waiting = reviewSeqRef.current !== null;
+      let started = false;
+      let safety: ReturnType<typeof setTimeout> | undefined;
+      const start = () => {
+        if (started || finishedRef.current) return;
+        started = true;
+        if (safety) clearTimeout(safety);
+        if (afterReviewRef.current === start) afterReviewRef.current = null;
+        setCountdown(countdownSec);
+      };
+      if (waiting) {
+        afterReviewRef.current = start;
+        safety = setTimeout(start, REVIEW_WAIT_MAX_MS);
+      } else {
+        start();
+      }
     });
   }, [countdown, isRemote]);
 
@@ -449,6 +580,7 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
       // Số tấm do host cấp: tấm chụp bằng phím sau đó không được trùng số
       nextSeqRef.current = Math.max(nextSeqRef.current, shot.shotIndex + 1);
       setShotsTaken(photosRef.current.length);
+      showReview(photo, shot.shotIndex);
       if (photosRef.current.length >= totalShots) finishRef.current();
     });
     return () => {
@@ -524,10 +656,10 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
             autoPlay
             playsInline
             muted
-            className={`w-full h-full object-cover scale-x-[-1] ${source === 'dslr' ? 'hidden' : 'block'}`}
+            className={`w-full h-full object-cover ${source === 'dslr' ? 'hidden' : 'block'}`}
           />
           {source === 'dslr' && (
-            <img ref={liveImgRef} alt="" className="w-full h-full object-cover scale-x-[-1]" />
+            <img ref={liveImgRef} alt="" className="w-full h-full object-cover" />
           )}
 
           {/* Đường kẻ căn khung: phần sáng trong đường viền trắng là phần ảnh sẽ nằm trong ô của frame */}
@@ -557,6 +689,15 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
             </div>
           )}
 
+          {/* Ảnh vừa chụp: phủ khung ngắm 2 giây rồi quay lại live view */}
+          {reviewPhoto && (
+            <img
+              src={reviewPhoto}
+              alt="Ảnh vừa chụp"
+              className="absolute inset-0 w-full h-full object-cover z-20 pointer-events-none select-none"
+            />
+          )}
+
           {!cameraReady && (
             <div className="absolute inset-0 flex items-center justify-center bg-neutral-900 text-white font-lobster text-xl">
               Đang kết nối camera ...
@@ -569,17 +710,30 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
             </div>
           )}
 
+          {/* Tấm vừa chụp bị bỏ: báo khách chụp lại (nằm trên ảnh xem lại và số đếm ngược) */}
           {captureError && (
-            <div className="absolute bottom-4 inset-x-0 flex justify-center pointer-events-none z-10">
-              <span className="max-w-[80%] px-5 py-2 rounded-full bg-[#7a0000]/90 text-white text-base font-semibold text-center">
-                {captureError}
-              </span>
+            <div className="absolute top-6 inset-x-0 flex justify-center pointer-events-none z-40">
+              <div
+                role="alert"
+                className="flex items-center gap-4 max-w-[85%] px-7 py-4 rounded-2xl bg-[#7a0000]/95 text-white shadow-2xl"
+              >
+                <RotateCcw className="w-10 h-10 flex-shrink-0" />
+                <div className="flex flex-col text-left">
+                  <span className="text-2xl font-bold leading-tight">
+                    Chụp lại tấm {Math.min(captureError.shot, totalShots)}/{totalShots}
+                  </span>
+                  <span className="text-base opacity-90 leading-snug">{captureError.reason}</span>
+                  <span className="text-base font-semibold leading-snug mt-1">
+                    {isRemote ? 'Bấm nút chụp để chụp lại tấm này.' : 'Máy sẽ đếm ngược và chụp lại ngay.'}
+                  </span>
+                </div>
+              </div>
             </div>
           )}
 
           {/* Số đếm ngược mờ giữa khung ngắm */}
           {countdown !== null && countdown > 0 && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
               <span
                 key={countdown}
                 className="text-white/45 font-bold leading-none tabular-nums animate-countdown"

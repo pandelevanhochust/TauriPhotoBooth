@@ -74,7 +74,7 @@ export const FavoriWelcomeScreen: React.FC<FavoriWelcomeScreenProps> = ({
         <div className="flex items-center justify-center gap-6 pt-4">
           <button
             onClick={() => onLanguageChange('vi')}
-            className={`px-8 py-3 rounded-full text-lg md:text-xl font-medium min-w-[150px] transition-all cursor-pointer shadow-md ${
+            className={`px-8 py-3 rounded-full text-lg md:text-xl font-medium min-w-[9.375rem] transition-all cursor-pointer shadow-md ${
               language === 'vi'
                 ? 'bg-[#7a0000] text-white shadow-[#7a0000]/30 scale-105'
                 : 'bg-white/80 text-[#4a3b32] border border-[#c5a880]/50 hover:bg-white'
@@ -85,7 +85,7 @@ export const FavoriWelcomeScreen: React.FC<FavoriWelcomeScreenProps> = ({
 
           <button
             onClick={() => onLanguageChange('en')}
-            className={`px-8 py-3 rounded-full text-lg md:text-xl font-medium min-w-[150px] transition-all cursor-pointer shadow-md ${
+            className={`px-8 py-3 rounded-full text-lg md:text-xl font-medium min-w-[9.375rem] transition-all cursor-pointer shadow-md ${
               language === 'en'
                 ? 'bg-[#7a0000] text-white shadow-[#7a0000]/30 scale-105'
                 : 'bg-white/80 text-[#4a3b32] border border-[#c5a880]/50 hover:bg-white'
@@ -101,7 +101,7 @@ export const FavoriWelcomeScreen: React.FC<FavoriWelcomeScreenProps> = ({
         <button
           onClick={onStart}
           disabled={paperCount <= 0}
-          className="btn-favori-primary px-14 py-3.5 text-xl font-medium min-w-[200px] cursor-pointer hover:brightness-110 active:scale-95 shadow-xl"
+          className="btn-favori-primary px-14 py-3.5 text-xl font-medium min-w-[12.5rem] cursor-pointer hover:brightness-110 active:scale-95 shadow-xl"
         >
           {language === 'vi' ? 'Tiếp tục' : 'Continue'}
         </button>

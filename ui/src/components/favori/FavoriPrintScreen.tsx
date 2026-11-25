@@ -299,7 +299,7 @@ export const FavoriPrintScreen: React.FC<FavoriPrintScreenProps> = ({
           </div>
         )}
 
-        <div className="flex flex-col items-center justify-center text-center space-y-5 w-[440px] flex-shrink-0">
+        <div className="flex flex-col items-center justify-center text-center space-y-5 w-[27.5rem] flex-shrink-0">
           {printError ? (
             <div className="space-y-3 flex flex-col items-center">
               <div className="w-16 h-16 rounded-full bg-rose-100 border-2 border-rose-400 flex items-center justify-center text-[#7a0000] shadow-md">

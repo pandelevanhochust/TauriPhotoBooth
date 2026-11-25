@@ -7,6 +7,7 @@ import { PrinterCheckPanel } from './admin/PrinterCheckPanel';
 import { CloudUploadPanel } from './admin/CloudUploadPanel';
 import { PrintImageTestPanel } from './admin/PrintImageTestPanel';
 import { ScrollableTabs } from './admin/ScrollableTabs';
+import { getUiScale } from '../services/uiScale';
 
 const TIMING_FIELDS: { key: NumericSettingKey; label: string; unit: string }[] = [
   { key: 'remoteCaptureTimeoutSec', label: 'Thời gian chụp bằng nút bấm', unit: 'giây' },
@@ -106,7 +107,11 @@ export const AdminModal: React.FC<AdminModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-6 text-white select-none">
-      <div className="relative w-full max-w-2xl max-h-[94vh] bg-[#161824] rounded-3xl border border-white/20 shadow-2xl p-8 flex flex-col min-h-0">
+      {/* Admin giữ cỡ cũ: thu lại đúng bằng tỉ lệ đã phóng toàn app (zoom cũng thu chiều cao, nên bù lại max-height) */}
+      <div
+        className="relative w-full max-w-2xl bg-[#161824] rounded-3xl border border-white/20 shadow-2xl p-8 flex flex-col min-h-0"
+        style={{ zoom: 1 / getUiScale(), maxHeight: `${94 * getUiScale()}vh` }}
+      >
         {/* Close Button */}
         <button
           onClick={onClose}

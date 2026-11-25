@@ -115,7 +115,7 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
             {onBack ? (
               <button
                 onClick={onBack}
-                className="btn-favori-primary px-8 py-3 text-base md:text-lg min-w-[140px] flex items-center justify-center cursor-pointer shadow-md"
+                className="btn-favori-primary px-8 py-3 text-base md:text-lg min-w-[8.75rem] flex items-center justify-center cursor-pointer shadow-md"
               >
                 {backLabel}
               </button>
@@ -136,7 +136,7 @@ export const FavoriLayout: React.FC<FavoriLayoutProps> = ({
               <button
                 onClick={onNext}
                 disabled={disableNext}
-                className={`btn-favori-primary px-10 py-3 text-base md:text-lg min-w-[160px] flex items-center justify-center cursor-pointer shadow-lg ${
+                className={`btn-favori-primary px-10 py-3 text-base md:text-lg min-w-[10rem] flex items-center justify-center cursor-pointer shadow-lg ${
                   disableNext ? 'opacity-40 cursor-not-allowed' : 'hover:brightness-105 active:scale-95'
                 }`}
               >

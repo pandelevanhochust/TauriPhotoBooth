@@ -81,7 +81,7 @@ export const FavoriQuantityScreen: React.FC<FavoriQuantityScreenProps> = ({
 
             <button
               onClick={handleApplyPromo}
-              className="btn-favori-primary px-6 h-12 text-base font-semibold min-w-[110px] cursor-pointer"
+              className="btn-favori-primary px-6 h-12 text-base font-semibold min-w-[6.875rem] cursor-pointer"
             >
               Áp dụng
             </button>

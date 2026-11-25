@@ -12,7 +12,8 @@ import { FavoriPhotoSelectScreen } from './components/favori/FavoriPhotoSelectSc
 import { FavoriPrintScreen } from './components/favori/FavoriPrintScreen';
 import { AdminModal } from './components/AdminModal';
 import { ipc } from './services/ipc';
-import { priceForQuantity, smallestHoleAspect } from './services/backendApi';
+import { backendApi, priceForQuantity, smallestHoleAspect } from './services/backendApi';
+import { preloadLuts } from './services/lut';
 import type { FrameOption, FilterOption, LayoutOption } from './services/backendApi';
 import { getKioskSettings, type KioskSettings } from './services/kioskSettings';
 import type { PhotoTransform } from './services/photoTransform';
@@ -66,6 +67,31 @@ export const App: React.FC = () => {
       .catch((err) => console.log('Get kiosk status error:', err));
   }, []);
 
+  // Nạp sẵn các bộ lọc LUT ngay lúc khởi động (và khi CMS đổi bộ lọc): tới bước chọn bộ lọc chỉ còn áp lên ảnh
+  useEffect(() => {
+    const preload = () =>
+      backendApi
+        .getPresets()
+        .then(preloadLuts)
+        .catch((err) => console.warn('[App] Nạp sẵn LUT lỗi:', err));
+    // Frame mới: tải sẵn ảnh thu nhỏ vào bộ nhớ đệm của WebView để bước chọn frame hiện ngay
+    const preloadFrameThumbs = () =>
+      backendApi
+        .getFrames()
+        .then((frames) =>
+          frames.forEach((f) => {
+            const img = new Image();
+            img.src = f.thumbnailUrl || f.frameUrl;
+          }),
+        )
+        .catch((err) => console.warn('[App] Tải sẵn ảnh frame lỗi:', err));
+    preload();
+    return ipc.listen<{ key?: string }>('cms_updated', (data) => {
+      if (data?.key === 'presets') preload();
+      if (data?.key === 'frames') preloadFrameThumbs();
+    });
+  }, []);
+
   // Keyboard shortcuts for technician admin access (F2, Ctrl+Shift+A, Ctrl+Alt+A)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -113,6 +139,8 @@ export const App: React.FC = () => {
     setSelectedFilter('original');
     setSelectedFilterObj(undefined);
     setStep('welcome');
+    // Hết phiên: hỏi server frame và bộ lọc ngầm, tải sẵn file mới để khách sau thấy ngay bản mới (layout giữ nguyên)
+    ipc.invoke('refresh_cms').catch((e) => console.warn('[App] refresh_cms lỗi:', e));
   };
 
   const handleSelectLayout = (layout: LayoutOption) => {
@@ -237,7 +265,7 @@ export const App: React.FC = () => {
           photos={capturedPhotos}
           frameObj={selectedFrameObj}
           layout={selectedLayout}
-          filterCss={selectedFilterObj?.cssFilter}
+          filter={selectedFilterObj}
           timeoutSec={settings.selectTimeoutSec}
           onBack={() => setStep('filter')}
           onConfirm={(slotted, transforms) => {

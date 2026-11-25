@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FavoriLayout } from './FavoriLayout';
-import { backendApi, type FrameOption, type HoleRectDto, type LayoutOption } from '../../services/backendApi';
+import { FilteredImage } from './FilteredImage';
+import { backendApi, type FilterOption, type FrameOption, type HoleRectDto, type LayoutOption } from '../../services/backendApi';
 import { useCountdown } from '../../hooks/useCountdown';
 import {
   IDENTITY_TRANSFORM,
@@ -13,7 +14,8 @@ interface FavoriPhotoSelectScreenProps {
   photos: string[];
   frameObj?: FrameOption;
   layout?: LayoutOption;
-  filterCss?: string;
+  /** Bộ lọc đang chọn (màu CSS hoặc LUT). */
+  filter?: FilterOption;
   timeoutSec?: number;
   /** Quay về bước chọn bộ lọc. */
   onBack?: () => void;
@@ -62,7 +64,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
   photos,
   frameObj,
   layout,
-  filterCss,
+  filter,
   timeoutSec = 180,
   onBack,
   onConfirm,
@@ -130,18 +132,11 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
   const resetSlotTransform = (sIdx: number) =>
     setTransforms((prev) => prev.map((t, i) => (i === sIdx ? IDENTITY_TRANSFORM : t)));
 
-  // Ít ảnh hơn số ô (chế độ nút bấm hết giờ) thì cho dùng lại ảnh
-  const allowReuse = photos.length < slotCount;
   const isComplete = slots.every((s) => s !== null);
 
   const handlePickPhoto = (photoIndex: number) => {
+    // Một ảnh có thể đặt vào nhiều ô: chạm là đưa vào ô trống đầu tiên (gỡ ảnh bằng cách chạm vào ảnh trong khung)
     const prev = slotsRef.current;
-    const usedAt = prev.indexOf(photoIndex);
-    if (usedAt !== -1 && !allowReuse) {
-      // Chạm lại ảnh đã chọn: gỡ khỏi ô
-      handleClearSlot(usedAt);
-      return;
-    }
     const empty = prev.indexOf(null);
     if (empty === -1) return;
     setSlots(prev.map((s, i) => (i === empty ? photoIndex : s)));
@@ -261,29 +256,25 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
       timeLeft={timeLeft}
       wide
     >
-      <div className="flex items-stretch justify-center gap-20 w-full h-full max-h-[62vh] px-8">
+      <div className="flex items-stretch justify-center gap-20 w-full h-full max-h-full px-8">
         {/* Kho ảnh vừa chụp: ảnh trần, 2 cột */}
         <div className="w-[46%] max-w-[760px] overflow-y-auto pr-2">
           <div className="grid grid-cols-2 gap-3">
             {photos.map((photo, pIdx) => {
-              const isUsed = slots.includes(pIdx);
               return (
                 <button
                   key={pIdx}
                   type="button"
                   onClick={() => handlePickPhoto(pIdx)}
-                  aria-pressed={isUsed}
                   aria-label={`Ảnh ${pIdx + 1}`}
                   className="relative block w-full aspect-[3/2] p-0 border-0 bg-neutral-900 overflow-hidden cursor-pointer active:scale-[0.98] transition-transform duration-150"
                 >
-                  <img
+                  <FilteredImage
                     src={photo}
+                    filter={filter}
                     alt=""
                     onLoad={(e) => rememberAspect(pIdx, e.currentTarget)}
-                    className={`w-full h-full object-cover transition-opacity duration-200 ${
-                      isUsed ? 'opacity-45' : 'opacity-100'
-                    }`}
-                    style={{ filter: filterCss || 'none' }}
+                    className="w-full h-full object-cover"
                   />
                 </button>
               );
@@ -304,16 +295,14 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
               return (
                 <div key={`slot-${sIdx}`} style={holeBox(hole)} className="absolute z-10 overflow-hidden bg-white">
                   {photo && (
-                    <img
+                    <FilteredImage
                       src={photo}
+                      filter={filter}
                       alt=""
                       draggable={false}
                       onLoad={(e) => photoIndex !== null && rememberAspect(photoIndex, e.currentTarget)}
                       className="absolute max-w-none pointer-events-none select-none"
-                      style={{
-                        ...transformStyle(t, photoAspect(photoIndex), holeAspect(sIdx)),
-                        filter: filterCss || 'none',
-                      }}
+                      style={transformStyle(t, photoAspect(photoIndex), holeAspect(sIdx))}
                     />
                   )}
                 </div>

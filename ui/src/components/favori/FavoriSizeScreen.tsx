@@ -70,21 +70,27 @@ export const FavoriSizeScreen: React.FC<FavoriSizeScreenProps> = ({
                 aria-label={layout.name}
                 className="flex flex-col items-center gap-3 p-0 border-0 bg-transparent cursor-pointer focus:outline-none active:scale-[0.98] transition-transform duration-200"
               >
+                {/* Ảnh minh hoạ không còn viền sẵn: viền be như thiết kế, chọn thì viền đỏ phát sáng giống frame ở bước 2 */}
                 <div
-                  className={`rounded-[20px] overflow-hidden transition-all duration-200 ${
-                    isSelected ? 'ring-4 ring-[#7a0000] scale-[1.03] shadow-xl' : 'hover:scale-[1.01]'
+                  style={{
+                    boxShadow: isSelected
+                      ? '0 0 18px 6px rgba(190, 40, 40, 0.45), 0 0 40px 10px rgba(190, 40, 40, 0.2)'
+                      : 'none',
+                  }}
+                  className={`rounded-[1.75rem] overflow-hidden bg-white border-4 transition-all duration-200 ${
+                    isSelected ? 'border-[#7a0000] scale-[1.03]' : 'border-[#EDE1C8]'
                   }`}
                 >
                   {image ? (
                     <img
                       src={image}
                       alt=""
-                      className="w-[340px] md:w-[368px] block select-none pointer-events-none"
+                      className="w-[21.25rem] md:w-[23rem] block select-none pointer-events-none"
                     />
                   ) : (
-                    <div className="w-[340px] md:w-[368px] h-[420px] bg-white flex items-center justify-center">
+                    <div className="w-[21.25rem] md:w-[23rem] h-[26.25rem] bg-white flex items-center justify-center">
                       <div
-                        className="h-[320px] border-2 border-dashed border-[#7a0000]/60 bg-[#f5f0ea]"
+                        className="h-[20rem] border-2 border-dashed border-[#7a0000]/60 bg-[#f5f0ea]"
                         style={{ aspectRatio: `${layout.widthPx} / ${layout.heightPx}` }}
                       />
                     </div>

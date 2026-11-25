@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using PhotoBooth.Core.Interfaces;
 using PhotoBooth.Core.Models;
+using PhotoBooth.Imaging.Filters;
 using SkiaSharp;
 
 namespace PhotoBooth.Imaging.Compositor;
@@ -32,8 +33,19 @@ public class NativeSkiaCompositor : IImageComposer
             // 1. Draw Background
             canvas.Clear(SKColors.White);
 
-            // Create ColorFilter from template.FilterCode if specified
-            using var colorFilter = GetColorFilter(template.FilterCode);
+            // Bộ lọc: theo preset CMS nếu có (ma trận màu kiểu CSS hoặc LUT .cube), không thì bảng mã cũ
+            var spec = template.Filter;
+            float[]? matrix = spec != null ? CssColorMatrix.Build(spec) : null;
+            using var colorFilter = spec != null
+                ? (matrix != null ? SKColorFilter.CreateColorMatrix(matrix) : null)
+                : GetColorFilter(template.FilterCode);
+            CubeLut? lut = null;
+            if (spec?.LutPath is string lutPath && File.Exists(lutPath))
+            {
+                try { lut = CubeLut.Load(lutPath); }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or FormatException) { lut = null; }
+            }
+            double lutIntensity = spec?.LutIntensity ?? 1;
 
             // 2. Ảnh luôn nằm DƯỚI frame để hoạ tiết đè lên mép ô không bị che
             for (int i = 0; i < template.Holes.Count && i < rawPhotoPaths.Count; i++)
@@ -46,7 +58,7 @@ public class NativeSkiaCompositor : IImageComposer
                 using var rawBitmap = SKBitmap.Decode(photoPath);
                 if (rawBitmap == null) continue;
 
-                RenderPhotoInHole(canvas, rawBitmap, template.Holes[i], colorFilter);
+                RenderPhotoInHole(canvas, rawBitmap, template.Holes[i], colorFilter, lut, lutIntensity);
             }
 
             // 3. Frame phủ lên trên; ô bị tô màu mẫu được khoét trong suốt trước để lộ ảnh
@@ -99,7 +111,8 @@ public class NativeSkiaCompositor : IImageComposer
     /// Vẽ ảnh phủ kín ô, có áp phóng to và độ lệch người dùng chỉnh ở bước chọn ảnh.
     /// Công thức khớp với bản xem trước ở UI (FavoriPhotoSelectScreen / photoTransform.ts).
     /// </summary>
-    private static void RenderPhotoInHole(SKCanvas canvas, SKBitmap bitmap, HoleLocation hole, SKColorFilter? colorFilter)
+    private static void RenderPhotoInHole(SKCanvas canvas, SKBitmap bitmap, HoleLocation hole, SKColorFilter? colorFilter,
+        CubeLut? lut = null, double lutIntensity = 1)
     {
         if (hole.Width <= 0 || hole.Height <= 0 || bitmap.Width <= 0 || bitmap.Height <= 0) return;
 
@@ -124,6 +137,23 @@ public class NativeSkiaCompositor : IImageComposer
         using var paint = new SKPaint { IsAntialias = true, ColorFilter = colorFilter };
         using var image = SKImage.FromBitmap(bitmap);
 
+        // LUT: vẽ ảnh ra một tấm đúng cỡ ô, áp LUT trên đó (chỉ xử lý số điểm ảnh của ô), rồi đặt tấm đó vào ô
+        SKBitmap? lutTile = null;
+        if (lut != null)
+        {
+            int w = Math.Max(1, (int)Math.Ceiling((double)hole.Width));
+            int h = Math.Max(1, (int)Math.Ceiling((double)hole.Height));
+            lutTile = new SKBitmap(new SKImageInfo(w, h, SKColorType.Rgba8888, SKAlphaType.Premul));
+            using (var tileCanvas = new SKCanvas(lutTile))
+            {
+                tileCanvas.Clear(SKColors.White);
+                var local = destRect;
+                local.Offset(-hole.X, -hole.Y);
+                tileCanvas.DrawImage(image, local, new SKSamplingOptions(SKCubicResampler.Mitchell), paint);
+            }
+            lut.Apply(lutTile, lutIntensity);
+        }
+
         canvas.Save();
         if (hole.CornerRadius > 0)
         {
@@ -135,7 +165,16 @@ public class NativeSkiaCompositor : IImageComposer
         {
             canvas.ClipRect(holeRect);
         }
-        canvas.DrawImage(image, destRect, new SKSamplingOptions(SKCubicResampler.Mitchell), paint);
+        if (lutTile != null)
+        {
+            using var tileImage = SKImage.FromBitmap(lutTile);
+            canvas.DrawImage(tileImage, new SKRect(hole.X, hole.Y, hole.X + lutTile.Width, hole.Y + lutTile.Height));
+            lutTile.Dispose();
+        }
+        else
+        {
+            canvas.DrawImage(image, destRect, new SKSamplingOptions(SKCubicResampler.Mitchell), paint);
+        }
         canvas.Restore();
     }
 
