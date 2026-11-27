@@ -59,6 +59,8 @@ interface FavoriLiveViewScreenProps {
   timelapseEnabled?: boolean;
   /** Chế độ nút bấm: hiện nút "Bấm chụp" trên màn hình. */
   showShutterButton?: boolean;
+  /** Lật gương khung ngắm (và ảnh xem lại ngay sau khi chụp cho khớp). Chỉ đổi cách hiển thị. */
+  mirrorLiveView?: boolean;
   /** Tỉ lệ rộng / cao của ô ảnh trong frame; có giá trị thì vẽ đường kẻ và phủ mờ phần ảnh sẽ bị cắt khi in. */
   guideAspect?: number;
   /** photos: ảnh để hiển thị (data URL); filePaths: ảnh gốc trên máy (cùng thứ tự, có thể rỗng). */
@@ -110,6 +112,7 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
   remoteTimeoutSec = 180,
   timelapseEnabled = false,
   showShutterButton = true,
+  mirrorLiveView = false,
   guideAspect,
   onAllShotsCaptured,
 }) => {
@@ -659,10 +662,10 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
             autoPlay
             playsInline
             muted
-            className={`w-full h-full object-cover ${source === 'dslr' ? 'hidden' : 'block'}`}
+            className={`w-full h-full object-cover ${source === 'dslr' ? 'hidden' : 'block'} ${mirrorLiveView ? 'scale-x-[-1]' : ''}`}
           />
           {source === 'dslr' && (
-            <img ref={liveImgRef} alt="" className="w-full h-full object-cover" />
+            <img ref={liveImgRef} alt="" className={`w-full h-full object-cover ${mirrorLiveView ? 'scale-x-[-1]' : ''}`} />
           )}
 
           {/* Đường kẻ căn khung: phần sáng trong đường viền trắng là phần ảnh sẽ nằm trong ô của frame */}
@@ -697,7 +700,7 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
             <img
               src={reviewPhoto}
               alt="Ảnh vừa chụp"
-              className="absolute inset-0 w-full h-full object-cover z-20 pointer-events-none select-none"
+              className={`absolute inset-0 w-full h-full object-cover z-20 pointer-events-none select-none ${mirrorLiveView ? 'scale-x-[-1]' : ''}`}
             />
           )}
 

@@ -245,6 +245,7 @@ export const App: React.FC = () => {
           remoteTimeoutSec={settings.remoteCaptureTimeoutSec}
           timelapseEnabled={settings.timelapseEnabled}
           showShutterButton={settings.screenShutterButton}
+          mirrorLiveView={settings.mirrorLiveView}
           guideAspect={smallestHoleAspect(selectedFrameObj?.holes)}
           onAllShotsCaptured={(newPhotos, paths) => {
             setCapturedPhotos(newPhotos);

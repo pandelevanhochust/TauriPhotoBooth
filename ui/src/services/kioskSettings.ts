@@ -16,12 +16,14 @@ export interface KioskSettings {
   timelapseEnabled: boolean;
   /** Chế độ nút bấm: hiện nút "Bấm chụp" trên màn hình (ngoài nút / điều khiển từ xa). */
   screenShutterButton: boolean;
+  /** Lật gương khung ngắm ở bước 7 (như soi gương, giống màn hình của máy ảnh khi xoay ra phía trước). Chỉ đổi cách hiển thị, ảnh chụp không đổi. */
+  mirrorLiveView: boolean;
   /** Thử nghiệm: cho khách chỉnh độ làm mịn da (thanh kéo 0-100) ở bước 8. Chỉ áp cho ảnh xem trước, CHƯA áp vào bản in. */
   skinSmoothEnabled: boolean;
 }
 
 /** Các cài đặt dạng số (chỉnh bằng ô nhập số trong admin). */
-export type NumericSettingKey = Exclude<keyof KioskSettings, 'timelapseEnabled' | 'screenShutterButton' | 'skinSmoothEnabled'>;
+export type NumericSettingKey = Exclude<keyof KioskSettings, 'timelapseEnabled' | 'screenShutterButton' | 'skinSmoothEnabled' | 'mirrorLiveView'>;
 
 export const DEFAULT_KIOSK_SETTINGS: KioskSettings = {
   remoteCaptureTimeoutSec: 180,
@@ -31,6 +33,7 @@ export const DEFAULT_KIOSK_SETTINGS: KioskSettings = {
   selectTimeoutSec: 180,
   timelapseEnabled: true,
   screenShutterButton: true,
+  mirrorLiveView: true,
   skinSmoothEnabled: false,
 };
 
@@ -48,6 +51,7 @@ function sanitize(raw: Partial<Record<keyof KioskSettings, unknown>>): KioskSett
   const result = { ...DEFAULT_KIOSK_SETTINGS };
   if (typeof raw.timelapseEnabled === 'boolean') result.timelapseEnabled = raw.timelapseEnabled;
   if (typeof raw.screenShutterButton === 'boolean') result.screenShutterButton = raw.screenShutterButton;
+  if (typeof raw.mirrorLiveView === 'boolean') result.mirrorLiveView = raw.mirrorLiveView;
   if (typeof raw.skinSmoothEnabled === 'boolean') result.skinSmoothEnabled = raw.skinSmoothEnabled;
   (Object.keys(LIMITS) as NumericSettingKey[]).forEach((key) => {
     const value = Number(raw[key]);

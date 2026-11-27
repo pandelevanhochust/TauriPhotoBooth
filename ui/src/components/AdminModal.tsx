@@ -272,6 +272,20 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   </label>
                   <label className="flex items-center justify-between gap-4 pt-3 border-t border-white/10">
                     <span>
+                      <span className="text-sm font-semibold text-gray-300 block">Lật gương khung ngắm (bước 7)</span>
+                      <span className="text-xs text-gray-400">
+                        Khách thấy như soi gương, giống màn hình máy ảnh khi xoay ra trước. Chỉ đổi cách hiển thị, ảnh chụp và ảnh in không bị lật
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={timing.mirrorLiveView}
+                      onChange={(e) => setTiming((prev) => ({ ...prev, mirrorLiveView: e.target.checked }))}
+                      className="w-6 h-6 accent-rose-500 cursor-pointer"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between gap-4 pt-3 border-t border-white/10">
+                    <span>
                       <span className="text-sm font-semibold text-gray-300 block">Nút "Bấm chụp" trên màn hình</span>
                       <span className="text-xs text-gray-400">
                         Chế độ nút bấm: khách chạm nút trên màn hình để chụp. Nút / điều khiển từ xa vẫn dùng được song song
