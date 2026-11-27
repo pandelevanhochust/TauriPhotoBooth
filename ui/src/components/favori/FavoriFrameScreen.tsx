@@ -119,9 +119,9 @@ export const FavoriFrameScreen: React.FC<FavoriFrameScreenProps> = ({
                     alt=""
                     style={{
                       aspectRatio: `auto ${aspectRatio}`,
-                      // Frame dải 2x6: vùng nhìn thấy chứa đúng 2,25 hàng (2 hàng đủ + 1/4 hàng thứ ba gợi ý lướt xuống);
+                      // Frame dải 2x6: vùng nhìn thấy chứa đúng 1,5 hàng (1 hàng đủ + nửa hàng thứ hai gợi ý lướt xuống);
                       // 1.5rem = khoảng cách giữa các hàng (gap-y-6)
-                      height: isStrip ? 'calc((100cqh - 2 * 1.5rem) / 2.25)' : undefined,
+                      height: isStrip ? 'calc((100cqh - 1.5rem) / 1.5)' : undefined,
                     }}
                     className={`block ${isStrip ? '' : 'h-[34vh] min-h-[220px]'} w-auto max-w-full pointer-events-none select-none`}
                     loading="lazy"

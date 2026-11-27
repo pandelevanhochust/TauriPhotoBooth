@@ -32,6 +32,8 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
 }) => {
   const [filters, setFilters] = useState<FilterOption[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  // Ảnh đang hiện lớn; khách chạm ảnh nhỏ bên dưới để đổi
+  const [mainIndex, setMainIndex] = useState<number>(0);
 
   const timeLeft = useCountdown(timeoutSec, onNext);
 
@@ -77,21 +79,54 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
   return (
     <FavoriLayout stepNumber={8} stepTitle="Chọn bộ lọc" onNext={onNext} timeLeft={timeLeft} wide>
       <div className="flex items-stretch justify-center gap-20 w-full h-full max-h-full px-8">
-        {/* Tất cả ảnh vừa chụp, áp bộ lọc đang chọn: cùng vị trí và cách xếp với bước chọn ảnh để in (2 cột) */}
-        <div className="w-[46%] max-w-[760px] overflow-y-auto pr-2">
+        {/* Một ảnh lớn áp bộ lọc đang chọn; các ảnh đã chụp xếp thành hàng ảnh nhỏ bên dưới, chạm để đổi ảnh lớn */}
+        <div className="flex-1 max-w-[1000px] min-w-0 min-h-0 flex flex-col gap-4">
           {photos.length > 0 ? (
-            <div className="grid grid-cols-2 gap-3">
-              {photos.map((photo, pIdx) => (
-                <div key={pIdx} className="relative w-full aspect-[3/2] bg-neutral-900 overflow-hidden">
+            <>
+              {/* Ảnh lớn: lớn nhất có thể trong phần còn lại, giữ tỉ lệ 3:2 */}
+              <div className="flex-1 min-h-0 flex items-center justify-center" style={{ containerType: 'size' }}>
+                <div
+                  className="relative bg-neutral-900 overflow-hidden shadow-lg"
+                  style={{ aspectRatio: '3 / 2', width: 'min(100cqw, calc(100cqh * 1.5))' }}
+                >
                   <FilteredImage
-                    src={photo}
+                    src={photos[Math.min(mainIndex, photos.length - 1)]}
                     filter={activeFilter}
-                    alt={`Ảnh ${pIdx + 1}`}
+                    alt={`Ảnh ${Math.min(mainIndex, photos.length - 1) + 1}`}
                     className="w-full h-full object-cover transition-[filter] duration-300"
                   />
                 </div>
-              ))}
-            </div>
+              </div>
+
+              {/* Ảnh nhỏ: cuộn ngang khi nhiều ảnh */}
+              {photos.length > 1 && (
+                <div className="flex-shrink-0 flex gap-3 overflow-x-auto px-1 py-2 justify-center-safe">
+                  {photos.map((photo, pIdx) => {
+                    const isMain = pIdx === Math.min(mainIndex, photos.length - 1);
+                    return (
+                      <button
+                        key={pIdx}
+                        type="button"
+                        onClick={() => setMainIndex(pIdx)}
+                        aria-pressed={isMain}
+                        aria-label={`Ảnh ${pIdx + 1}`}
+                        className={`relative flex-shrink-0 h-[6.5rem] aspect-[3/2] p-0 bg-neutral-900 overflow-hidden cursor-pointer transition-all duration-200 active:scale-95 border-[3px] ${
+                          isMain ? 'border-[#b00012] shadow-lg' : 'border-transparent opacity-75'
+                        }`}
+                      >
+                        <FilteredImage
+                          src={photo}
+                          filter={activeFilter}
+                          alt=""
+                          draggable={false}
+                          className="w-full h-full object-cover pointer-events-none select-none"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </>
           ) : (
             <div className="w-full aspect-[3/2] bg-neutral-900 flex items-center justify-center text-neutral-400 text-sm">
               Chưa có ảnh

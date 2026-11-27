@@ -57,6 +57,8 @@ interface FavoriLiveViewScreenProps {
   remoteTimeoutSec?: number;
   /** Ghi video timelapse trong lúc chụp. */
   timelapseEnabled?: boolean;
+  /** Chế độ nút bấm: hiện nút "Bấm chụp" trên màn hình. */
+  showShutterButton?: boolean;
   /** Tỉ lệ rộng / cao của ô ảnh trong frame; có giá trị thì vẽ đường kẻ và phủ mờ phần ảnh sẽ bị cắt khi in. */
   guideAspect?: number;
   /** photos: ảnh để hiển thị (data URL); filePaths: ảnh gốc trên máy (cùng thứ tự, có thể rỗng). */
@@ -107,6 +109,7 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
   countdownSec = 10,
   remoteTimeoutSec = 180,
   timelapseEnabled = false,
+  showShutterButton = true,
   guideAspect,
   onAllShotsCaptured,
 }) => {
@@ -766,7 +769,21 @@ export const FavoriLiveViewScreen: React.FC<FavoriLiveViewScreenProps> = ({
               {shotsTaken}/{totalShots}
             </span>
 
-            {isRemote && (
+            {isRemote && showShutterButton && (
+              <button
+                type="button"
+                onClick={handleRemoteShot}
+                disabled={isCapturing || isFinished}
+                className={`btn-favori-primary w-28 h-28 !rounded-full flex flex-col items-center justify-center gap-1 text-base font-semibold cursor-pointer shadow-xl ${
+                  isCapturing || isFinished ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                <Camera className="w-8 h-8" />
+                Bấm chụp
+              </button>
+            )}
+
+            {isRemote && !showShutterButton && (
               <div
                 className={`flex flex-col items-center gap-2 text-center text-[#7a0000] transition-opacity ${
                   isCapturing || isFinished ? 'opacity-40' : ''

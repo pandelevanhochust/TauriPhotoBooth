@@ -270,6 +270,20 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       className="w-6 h-6 accent-rose-500 cursor-pointer"
                     />
                   </label>
+                  <label className="flex items-center justify-between gap-4 pt-3 border-t border-white/10">
+                    <span>
+                      <span className="text-sm font-semibold text-gray-300 block">Nút "Bấm chụp" trên màn hình</span>
+                      <span className="text-xs text-gray-400">
+                        Chế độ nút bấm: khách chạm nút trên màn hình để chụp. Nút / điều khiển từ xa vẫn dùng được song song
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={timing.screenShutterButton}
+                      onChange={(e) => setTiming((prev) => ({ ...prev, screenShutterButton: e.target.checked }))}
+                      className="w-6 h-6 accent-rose-500 cursor-pointer"
+                    />
+                  </label>
                   <p className="text-xs text-gray-400 pt-1">
                     Nhấn "Lưu Thay Đổi" để áp dụng. Thay đổi có hiệu lực từ phiên chụp kế tiếp.
                   </p>

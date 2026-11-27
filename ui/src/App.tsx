@@ -235,6 +235,7 @@ export const App: React.FC = () => {
           countdownSec={settings.autoCountdownSec}
           remoteTimeoutSec={settings.remoteCaptureTimeoutSec}
           timelapseEnabled={settings.timelapseEnabled}
+          showShutterButton={settings.screenShutterButton}
           guideAspect={smallestHoleAspect(selectedFrameObj?.holes)}
           onAllShotsCaptured={(newPhotos, paths) => {
             setCapturedPhotos(newPhotos);
