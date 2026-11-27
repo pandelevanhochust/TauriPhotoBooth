@@ -39,7 +39,7 @@ public static class FilePrep
 /// <summary>Một file của phiên sẽ gửi lên backend.</summary>
 public sealed class ManifestFile
 {
-    /// <summary>collage | print | original | timelapse | gif | thumbnail</summary>
+    /// <summary>collage | print | original | filtered | timelapse | gif | thumbnail</summary>
     public string Type { get; set; } = "";
     public int Index { get; set; }
     /// <summary>File gốc trên máy.</summary>
@@ -101,10 +101,12 @@ public sealed class SessionManifest
         "collage" => 0,
         "print" => 1,
         "original" => 2,
-        "thumbnail" => 3,
-        "timelapse" => 4,
-        "gif" => 5,
-        _ => 6,
+        // Bản đã áp filter của ảnh lẻ (cùng Index với bản gốc): gửi sau toàn bộ ảnh gốc
+        "filtered" => 3,
+        "thumbnail" => 4,
+        "timelapse" => 5,
+        "gif" => 6,
+        _ => 7,
     };
 
     public IEnumerable<ManifestFile> FilesInUploadOrder() =>

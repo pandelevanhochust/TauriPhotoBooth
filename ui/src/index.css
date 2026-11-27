@@ -112,3 +112,27 @@
 *::-webkit-scrollbar {
   display: none;
 }
+
+/* Thanh kéo độ làm mịn da (bước 8): nút kéo to cho màn hình cảm ứng */
+.skin-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 0.4rem;
+  border-radius: 9999px;
+  background: linear-gradient(to right, #e7d7c9, #b00012);
+  outline: none;
+}
+.skin-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 9999px;
+  background: #fff;
+  border: 3px solid #b00012;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+}
+.skin-slider:active::-webkit-slider-thumb {
+  transform: scale(1.1);
+}

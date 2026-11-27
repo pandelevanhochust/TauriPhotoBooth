@@ -68,6 +68,58 @@ public sealed class SessionUploadQueueTests : IDisposable
     }
 
     [Fact]
+    public async Task ServerFileTypes_AreSavedFromConfig()
+    {
+        _server.FileTypes = new[] { "collage", "original", "filtered" };
+        Assert.False(_settings.ServerSupports("filtered")); // chưa từng lấy cấu hình: loại file mới không được gửi
+        var queue = NewQueue();
+        queue.Enqueue(NewSession());
+        await Drain(queue);
+
+        Assert.True(_settings.ServerSupports("filtered"));
+        Assert.True(_settings.ServerSupports("FILTERED"));
+        Assert.False(_settings.ServerSupports("sticker"));
+        Assert.Equal(40, _settings.MaxFilesPerSession);
+    }
+
+    [Fact]
+    public async Task FilteredPhotos_AreSentAfterAllOriginals_BeforeThumbnail()
+    {
+        var queue = NewQueue();
+        var m = NewSession();
+        foreach (int i in new[] { 1, 0 })
+        {
+            string original = m.Files.First(f => f.Type == "original" && f.Index == i).SourcePath;
+            m.Files.Add(new() { Type = "filtered", Index = i, SourcePath = original, ContentType = "image/jpeg" });
+        }
+        queue.Enqueue(m);
+        await Drain(queue);
+
+        Assert.Equal(1, queue.GetStatus().ReadySessions);
+        Assert.Equal(
+            new[] { "collage#0", "original#0", "original#1", "filtered#0", "filtered#1", "thumbnail#0", "timelapse#0" },
+            _server.Uploads.Select(u => u.Key).ToArray());
+    }
+
+    [Fact]
+    public async Task FilteredPhotos_AttachedAfterEnqueue_AreDeclaredAndUploaded()
+    {
+        var queue = NewQueue();
+        var m = NewSession();
+        queue.Enqueue(m);
+        await Drain(queue);
+        Assert.Equal(1, queue.GetStatus().ReadySessions);
+
+        // Ảnh đã filter được tạo nền sau khi phiên vào hàng đợi: gắn thêm, phiên phải được khai báo lại và gửi nốt
+        string original = m.Files.First(f => f.Type == "original" && f.Index == 0).SourcePath;
+        queue.AttachFile(m.SessionId, new ManifestFile { Type = "filtered", Index = 0, SourcePath = original, ContentType = "image/jpeg" });
+        await Drain(queue);
+
+        Assert.Contains("filtered#0", _server.Uploads.Select(u => u.Key));
+        Assert.Equal(1, queue.GetStatus().ReadySessions);
+    }
+
+    [Fact]
     public void ShareToken_Is22Base62Chars()
     {
         var token = ShareIds.NewShareToken();
@@ -339,6 +391,8 @@ public sealed class SessionUploadQueueTests : IDisposable
         public List<(string Key, int Status)> Uploads { get; } = new();
         public int LastInitFiles { get; private set; }
         public Func<Req, int, HttpStatusCode?>? Fail { get; set; }
+        /// <summary>Danh sách loại file server báo trong GET /config.</summary>
+        public string[] FileTypes { get; set; } = { "collage" };
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -373,7 +427,7 @@ public sealed class SessionUploadQueueTests : IDisposable
 
             if (path == "/api/kiosk/sessions/config")
             {
-                return Json(HttpStatusCode.OK, new { shareBaseUrl = "https://api.test/s/", retentionHours = 24, maxImageBytes = 1000000, maxVideoBytes = 1000000, maxFilesPerSession = 40, fileTypes = new[] { "collage" } });
+                return Json(HttpStatusCode.OK, new { shareBaseUrl = "https://api.test/s/", retentionHours = 24, maxImageBytes = 1000000, maxVideoBytes = 1000000, maxFilesPerSession = 40, fileTypes = FileTypes });
             }
             if (path == "/api/kiosk/sessions" && request.Method == HttpMethod.Post)
             {

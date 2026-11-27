@@ -137,7 +137,7 @@ export function loadCubeLut(url: string): Promise<CubeLut> {
 const MAX_PREVIEW_SIDE = 1280;
 
 /** Bộ nhớ đệm có giới hạn: bỏ mục dùng lâu nhất khi đầy (ảnh của các lượt chụp trước). */
-class LruCache<V> {
+export class LruCache<V> {
   private map = new Map<string, V>();
   private readonly max: number;
   private readonly onEvict: (v: V) => void;
@@ -183,7 +183,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-function loadSource(src: string): Promise<ImageBitmap> {
+export function loadSource(src: string): Promise<ImageBitmap> {
   let cached = sourceCache.get(src);
   if (!cached) {
     cached = loadImage(src).then((img) => {

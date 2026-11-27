@@ -348,11 +348,17 @@ public sealed class SessionUploadQueue : IDisposable
         }
         _nextConfigFetch = _now() + ConfigRefresh;
         var s = _getSettings().Clone();
+        // Server không gửi fileTypes thì giữ danh sách đã lưu
+        string[] fileTypes = res.Value.FileTypes ?? s.ServerFileTypes;
         bool changed = s.CachedShareBaseUrl != res.Value.ShareBaseUrl
             || s.RetentionHours != res.Value.RetentionHours
             || s.MaxImageBytes != res.Value.MaxImageBytes
-            || s.MaxVideoBytes != res.Value.MaxVideoBytes;
+            || s.MaxVideoBytes != res.Value.MaxVideoBytes
+            || (res.Value.MaxFilesPerSession > 0 && s.MaxFilesPerSession != res.Value.MaxFilesPerSession)
+            || !fileTypes.SequenceEqual(s.ServerFileTypes);
         if (!changed) return;
+        s.ServerFileTypes = fileTypes;
+        if (res.Value.MaxFilesPerSession > 0) s.MaxFilesPerSession = res.Value.MaxFilesPerSession;
         if (!string.IsNullOrWhiteSpace(res.Value.ShareBaseUrl)) s.CachedShareBaseUrl = res.Value.ShareBaseUrl.TrimEnd('/');
         if (res.Value.RetentionHours > 0) s.RetentionHours = res.Value.RetentionHours;
         if (res.Value.MaxImageBytes > 0) s.MaxImageBytes = res.Value.MaxImageBytes;

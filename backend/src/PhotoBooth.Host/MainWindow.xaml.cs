@@ -1288,7 +1288,7 @@ public partial class MainWindow : Window
                     }
 
                     // Gửi phiên lên server chạy nền: ảnh ghép giống bản in (có QR), ảnh lẻ, ảnh nhỏ, video
-                    if (cloudActive) EnqueueCloudSession(_lastCompositePath, shareUrl, payload);
+                    if (cloudActive) EnqueueCloudSession(_lastCompositePath, shareUrl, payload, template.Filter, filterCode);
 
                     // Ảnh xem trước = đúng bản sẽ in (có QR nếu frame có vị trí QR)
                     byte[] compBytes = await File.ReadAllBytesAsync(_lastCompositePath);

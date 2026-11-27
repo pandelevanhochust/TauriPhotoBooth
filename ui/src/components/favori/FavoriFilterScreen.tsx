@@ -6,6 +6,7 @@ import { useCountdown } from '../../hooks/useCountdown';
 import { FilteredImage } from './FilteredImage';
 import { ipc } from '../../services/ipc';
 import { warmLutPreviews } from '../../services/lut';
+import { SKIN_MAX, SKIN_STEP, type SkinLevel } from '../../services/skin';
 
 export type { FilterOption };
 
@@ -15,6 +16,10 @@ interface FavoriFilterScreenProps {
   onSelectFilter: (id: string, filterObj?: FilterOption) => void;
   timeoutSec?: number;
   onNext: () => void;
+  /** Thử nghiệm: hiện thanh kéo độ làm mịn da 0-100 (bật trong Admin). */
+  skinEnabled?: boolean;
+  skin?: SkinLevel;
+  onSelectSkin?: (level: SkinLevel) => void;
 }
 
 /** Nhãn ngắn cho nút tròn: "Ảnh Gốc (Natural)" -> "Gốc", "Đen Trắng Cổ Điển (Classic B&W)" -> "Đen Trắng Cổ Điển". */
@@ -29,13 +34,45 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
   onSelectFilter,
   timeoutSec = 60,
   onNext,
+  skinEnabled = false,
+  skin = 0,
+  onSelectSkin,
 }) => {
   const [filters, setFilters] = useState<FilterOption[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   // Ảnh đang hiện lớn; khách chạm ảnh nhỏ bên dưới để đổi
   const [mainIndex, setMainIndex] = useState<number>(0);
 
-  const timeLeft = useCountdown(timeoutSec, onNext);
+  // Thanh kéo độ làm mịn: số hiển thị đổi ngay khi kéo, còn ảnh chỉ tính lại khi dừng kéo (tránh tính liên tục từng nấc)
+  const [skinDraft, setSkinDraft] = useState<number>(skin);
+  const skinDraftRef = useRef(skin);
+  const skinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flushSkin = () => {
+    if (skinTimerRef.current) {
+      clearTimeout(skinTimerRef.current);
+      skinTimerRef.current = null;
+    }
+    if (skinDraftRef.current !== skin) onSelectSkin?.(skinDraftRef.current);
+  };
+  const changeSkin = (value: number) => {
+    skinDraftRef.current = value;
+    setSkinDraft(value);
+    if (skinTimerRef.current) clearTimeout(skinTimerRef.current);
+    skinTimerRef.current = setTimeout(flushSkin, 300);
+  };
+  // Sang bước sau (bấm Tiếp tục hoặc hết giờ): chốt giá trị đang kéo dở để bước 9 dùng đúng độ mịn khách thấy
+  const handleNext = () => {
+    flushSkin();
+    onNext();
+  };
+  useEffect(
+    () => () => {
+      if (skinTimerRef.current) clearTimeout(skinTimerRef.current);
+    },
+    [],
+  );
+
+  const timeLeft = useCountdown(timeoutSec, handleNext);
 
   // Bộ lọc đang chọn, đọc trong callback của sự kiện mà không phải đăng ký lại
   const selectedRef = useRef(selectedFilter);
@@ -77,7 +114,7 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
   const activeFilter = filters.find((f) => f.id === selectedFilter || f.code === selectedFilter);
 
   return (
-    <FavoriLayout stepNumber={8} stepTitle="Chọn bộ lọc" onNext={onNext} timeLeft={timeLeft} wide>
+    <FavoriLayout stepNumber={8} stepTitle="Chọn bộ lọc" onNext={handleNext} timeLeft={timeLeft} wide>
       <div className="flex items-stretch justify-center gap-20 w-full h-full max-h-full px-8">
         {/* Một ảnh lớn áp bộ lọc đang chọn; các ảnh đã chụp xếp thành hàng ảnh nhỏ bên dưới, chạm để đổi ảnh lớn */}
         <div className="flex-1 max-w-[1000px] min-w-0 min-h-0 flex flex-col gap-4">
@@ -92,6 +129,7 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
                   <FilteredImage
                     src={photos[Math.min(mainIndex, photos.length - 1)]}
                     filter={activeFilter}
+                    skin={skin}
                     alt={`Ảnh ${Math.min(mainIndex, photos.length - 1) + 1}`}
                     className="w-full h-full object-cover transition-[filter] duration-300"
                   />
@@ -114,6 +152,7 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
                           isMain ? 'border-[#b00012] shadow-lg' : 'border-transparent opacity-75'
                         }`}
                       >
+                        {/* Ảnh nhỏ chỉ cần màu của bộ lọc: làm mịn da ở cỡ này không thấy được nên bỏ qua cho đỡ tính */}
                         <FilteredImage
                           src={photo}
                           filter={activeFilter}
@@ -134,8 +173,33 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
           )}
         </div>
 
-        {/* Lưới nút lọc tròn */}
-        <div className="w-[26rem] flex-shrink-0 max-h-full overflow-y-auto py-2 self-center">
+        {/* Cột bên phải: (thử nghiệm) làm mịn da, rồi lưới nút lọc tròn */}
+        <div className="w-[26rem] flex-shrink-0 max-h-full flex flex-col gap-6 py-2 self-center">
+          {skinEnabled && (
+            <div className="flex flex-col gap-2 px-6">
+              <div className="flex items-baseline justify-between">
+                <span className="font-lobster text-xl text-[#1f1610]">Làm mịn da</span>
+                <span className="text-lg font-bold tabular-nums text-[#7a0000]">{skinDraft}</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={SKIN_MAX}
+                step={SKIN_STEP}
+                value={skinDraft}
+                onChange={(e) => changeSkin(Number(e.target.value))}
+                onPointerUp={flushSkin}
+                onKeyUp={flushSkin}
+                aria-label="Độ làm mịn da"
+                className="skin-slider w-full cursor-pointer"
+              />
+              <div className="flex justify-between text-xs font-semibold text-[#6b5b52]">
+                <span>0</span>
+                <span>{SKIN_MAX}</span>
+              </div>
+            </div>
+          )}
+          <div className="min-h-0 overflow-y-auto">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16 space-y-3">
               <Loader2 className="w-8 h-8 animate-spin text-[#7a0000]" />
@@ -164,6 +228,7 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
               })}
             </div>
           )}
+          </div>
         </div>
       </div>
     </FavoriLayout>

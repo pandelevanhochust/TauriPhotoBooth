@@ -7,7 +7,9 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using PhotoBooth.Core.Cloud;
 using PhotoBooth.Core.Storage;
+using PhotoBooth.Core.Models;
 using PhotoBooth.Imaging;
+using PhotoBooth.Imaging.Filters;
 
 namespace PhotoBooth.Host;
 
@@ -194,7 +196,7 @@ public partial class MainWindow
     private static readonly Regex ShotNumber = new(@"shot_(\d+)\.jpg$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     /// <summary>Đưa phiên vào hàng đợi gửi: ảnh ghép, toàn bộ ảnh đã chụp, ảnh nhỏ (video gắn thêm khi mã hoá xong).</summary>
-    private void EnqueueCloudSession(string collagePath, string shareUrl, JsonElement payload)
+    private void EnqueueCloudSession(string collagePath, string shareUrl, JsonElement payload, PhotoFilterSpec? filter, string filterCode)
     {
         if (_uploadQueue == null) return;
         int? frameId = int.TryParse(ReadString(payload, "frameId"), out var fid) ? fid : (int?)ReadDouble(payload, "frameId");
@@ -236,7 +238,98 @@ public partial class MainWindow
         catch (Exception ex)
         {
             App.Log($"[ERROR] Không đưa được phiên {_currentSessionId} vào hàng đợi gửi: {ex.Message}");
+            return;
         }
+
+        // Ảnh gốc đã vào hàng đợi; bản đã áp filter của từng ảnh lẻ tạo nền rồi gắn thêm vào phiên
+        QueueFilteredPhotos(_cloudSessionId, _currentSessionDir, shots, files.Count, filter, filterCode);
+    }
+
+    /// <summary>
+    /// Gửi thêm bản đã áp filter của từng ảnh lẻ (loại file "filtered", cùng số thứ tự với bản gốc "original").
+    /// Chỉ làm khi: filter có làm đổi ảnh, server báo hỗ trợ loại "filtered" trong GET /config (server chưa hỗ trợ thì từ chối
+    /// file lạ, nên không được khai báo), và còn chỗ trong giới hạn số file của phiên. Tạo file chạy nền, không chặn màn hình in.
+    /// </summary>
+    private void QueueFilteredPhotos(Guid cloudSessionId, string sessionDir, IReadOnlyList<string> shots, int declaredFiles, PhotoFilterSpec? filter, string filterCode)
+    {
+        if (_uploadQueue == null || shots.Count == 0) return;
+        if (filter == null)
+        {
+            // Preset không có trên CMS (bản in dùng bảng mã cũ): không dựng lại được cùng màu cho ảnh lẻ
+            if (!string.IsNullOrEmpty(filterCode) && !string.Equals(filterCode, "original", StringComparison.OrdinalIgnoreCase))
+            {
+                App.Log($"[INFO] Cloud: bộ lọc {filterCode} không có trong danh sách CMS, không gửi bản ảnh lẻ đã filter");
+            }
+            return;
+        }
+        if (!PhotoFilterApplier.HasEffect(filter)) return; // ảnh gốc: bản filter trùng bản gốc, không gửi
+
+        var settings = CloudSettingsSnapshot();
+        if (!settings.ServerSupports("filtered"))
+        {
+            App.Log("[INFO] Cloud: server chưa báo hỗ trợ loại file 'filtered', chỉ gửi ảnh gốc");
+            return;
+        }
+
+        // Chừa chỗ cho video (timelapse đầy đủ + tua nhanh) gắn thêm sau
+        int room = settings.MaxFilesPerSession - declaredFiles - 2;
+        int count = Math.Min(shots.Count, Math.Max(0, room));
+        if (count < shots.Count)
+        {
+            App.Log($"[WARN] Cloud: giới hạn {settings.MaxFilesPerSession} file mỗi phiên, chỉ gửi {count}/{shots.Count} ảnh đã filter");
+        }
+        if (count == 0) return;
+
+        var sources = shots.Take(count).ToList();
+        _ = Task.Run(() =>
+        {
+            var thread = Thread.CurrentThread;
+            var oldPriority = thread.Priority;
+            try
+            {
+                thread.Priority = ThreadPriority.BelowNormal; // không tranh CPU với live view của khách kế tiếp
+                CubeLut? lut = null;
+                if (filter.HasLut)
+                {
+                    if (string.IsNullOrEmpty(filter.LutPath) || !File.Exists(filter.LutPath))
+                    {
+                        App.Log("[WARN] Cloud: chưa có file LUT trên máy, không tạo được ảnh đã filter");
+                        return;
+                    }
+                    lut = CubeLut.Load(filter.LutPath);
+                }
+
+                string dir = Path.Combine(sessionDir, "filtered");
+                Directory.CreateDirectory(dir);
+                var made = new List<ManifestFile>();
+                for (int i = 0; i < sources.Count; i++)
+                {
+                    string target = Path.Combine(dir, $"filtered_{i:00}.jpg");
+                    try
+                    {
+                        UploadMediaPreparer.WriteResizedJpeg(sources[i], target, UploadMediaPreparer.OriginalMaxSide, 90,
+                            bitmap => PhotoFilterApplier.Apply(bitmap, filter, lut));
+                        made.Add(new ManifestFile { Type = "filtered", Index = i, SourcePath = target, ContentType = "image/jpeg" });
+                    }
+                    catch (Exception ex)
+                    {
+                        // Một ảnh lỗi không chặn các ảnh khác; ảnh gốc của nó vẫn được gửi
+                        App.Log($"[WARN] Cloud: không tạo được ảnh đã filter #{i}: {ex.Message}");
+                    }
+                }
+                // Gắn sau khi tạo xong cả loạt để phiên chỉ phải khai báo lại một lần
+                foreach (var file in made) _uploadQueue.AttachFile(cloudSessionId, file);
+                App.Log($"[INFO] Cloud: thêm {made.Count} ảnh đã filter vào phiên {Path.GetFileName(sessionDir)}");
+            }
+            catch (Exception ex)
+            {
+                App.Log($"[WARN] Cloud: tạo ảnh đã filter thất bại: {ex.Message}");
+            }
+            finally
+            {
+                thread.Priority = oldPriority;
+            }
+        });
     }
 
     /// <summary>Video phiên mã hoá xong: gắn vào phiên đã/sắp vào hàng đợi.</summary>

@@ -284,6 +284,20 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                       className="w-6 h-6 accent-rose-500 cursor-pointer"
                     />
                   </label>
+                  <label className="flex items-center justify-between gap-4 pt-3 border-t border-white/10">
+                    <span>
+                      <span className="text-sm font-semibold text-gray-300 block">Thử nghiệm: làm mịn da (bước 8)</span>
+                      <span className="text-xs text-amber-300">
+                        Hiện thanh kéo độ mịn 0-100 cho khách. Chỉ áp cho ảnh xem trước, CHƯA áp vào bản in: ảnh in ra sẽ không mịn như màn hình. Chỉ bật để thử.
+                      </span>
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={timing.skinSmoothEnabled}
+                      onChange={(e) => setTiming((prev) => ({ ...prev, skinSmoothEnabled: e.target.checked }))}
+                      className="w-6 h-6 accent-rose-500 cursor-pointer"
+                    />
+                  </label>
                   <p className="text-xs text-gray-400 pt-1">
                     Nhấn "Lưu Thay Đổi" để áp dụng. Thay đổi có hiệu lực từ phiên chụp kế tiếp.
                   </p>
