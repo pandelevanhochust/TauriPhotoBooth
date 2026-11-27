@@ -14,6 +14,7 @@ import { AdminModal } from './components/AdminModal';
 import { ipc } from './services/ipc';
 import { backendApi, priceForQuantity, smallestHoleAspect } from './services/backendApi';
 import { preloadLuts } from './services/lut';
+import { preloadSkin, type SkinLevel } from './services/skin';
 import type { FrameOption, FilterOption, LayoutOption } from './services/backendApi';
 import { getKioskSettings, type KioskSettings } from './services/kioskSettings';
 import type { PhotoTransform } from './services/photoTransform';
@@ -47,6 +48,8 @@ export const App: React.FC = () => {
   const [captureMode, setCaptureMode] = useState<CaptureMode>('autoCountdown');
   const [selectedFilter, setSelectedFilter] = useState<string>('original');
   const [selectedFilterObj, setSelectedFilterObj] = useState<FilterOption | undefined>(undefined);
+  // Thử nghiệm: mức làm mịn da khách chọn ở bước 8 (chỉ có tác dụng khi bật trong Admin)
+  const [selectedSkin, setSelectedSkin] = useState<SkinLevel>('off');
   // capturedPhotos: toàn bộ ảnh gốc của phiên; slottedPhotos: ảnh đã xếp theo thứ tự ô để in
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const [slottedPhotos, setSlottedPhotos] = useState<string[]>([]);
@@ -91,6 +94,11 @@ export const App: React.FC = () => {
       if (data?.key === 'frames') preloadFrameThumbs();
     });
   }, []);
+
+  // Thử nghiệm làm mịn da: nạp sẵn mô hình nhận diện khuôn mặt lúc khởi động để lần đầu không phải chờ
+  useEffect(() => {
+    if (settings.skinSmoothEnabled) void preloadSkin();
+  }, [settings.skinSmoothEnabled]);
 
   // Keyboard shortcuts for technician admin access (F2, Ctrl+Shift+A, Ctrl+Alt+A)
   useEffect(() => {
@@ -138,6 +146,7 @@ export const App: React.FC = () => {
     setSelectedFrameObj(undefined);
     setSelectedFilter('original');
     setSelectedFilterObj(undefined);
+    setSelectedSkin('off');
     setStep('welcome');
     // Hết phiên: hỏi server frame và bộ lọc ngầm, tải sẵn file mới để khách sau thấy ngay bản mới (layout giữ nguyên)
     ipc.invoke('refresh_cms').catch((e) => console.warn('[App] refresh_cms lỗi:', e));
@@ -256,6 +265,9 @@ export const App: React.FC = () => {
           }}
           timeoutSec={settings.filterTimeoutSec}
           onNext={() => setStep('photoSelect')}
+          skinEnabled={settings.skinSmoothEnabled}
+          skin={settings.skinSmoothEnabled ? selectedSkin : 'off'}
+          onSelectSkin={setSelectedSkin}
         />
       )}
 
@@ -266,6 +278,7 @@ export const App: React.FC = () => {
           frameObj={selectedFrameObj}
           layout={selectedLayout}
           filter={selectedFilterObj}
+          skin={settings.skinSmoothEnabled ? selectedSkin : 'off'}
           timeoutSec={settings.selectTimeoutSec}
           onBack={() => setStep('filter')}
           onConfirm={(slotted, transforms) => {

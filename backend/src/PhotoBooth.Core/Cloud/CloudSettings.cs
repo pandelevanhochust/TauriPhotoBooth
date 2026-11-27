@@ -31,6 +31,19 @@ public sealed class CloudSettings
     public long MaxImageBytes { get; set; } = 25L * 1024 * 1024;
     public long MaxVideoBytes { get; set; } = 100L * 1024 * 1024;
 
+    /// <summary>Số file tối đa của một phiên (GET /config → maxFilesPerSession).</summary>
+    public int MaxFilesPerSession { get; set; } = 40;
+
+    /// <summary>
+    /// Các loại file server báo hỗ trợ (GET /config → fileTypes), lưu lại để biết có gửi loại file mới hay không kể cả khi offline.
+    /// Trống = chưa từng lấy được (coi như chỉ hỗ trợ các loại có từ đầu).
+    /// </summary>
+    public string[] ServerFileTypes { get; set; } = Array.Empty<string>();
+
+    /// <summary>Server có báo hỗ trợ loại file này không. Loại file mới (vd. "filtered") chỉ được gửi khi server khai báo.</summary>
+    public bool ServerSupports(string type) =>
+        ServerFileTypes.Any(t => string.Equals(t, type, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Giới hạn tốc độ gửi (KB/s) để không chiếm hết đường mạng. 0 = không giới hạn.</summary>
     public int MaxUploadKBps { get; set; } = 2048;
 

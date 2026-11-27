@@ -14,10 +14,12 @@ export interface KioskSettings {
   selectTimeoutSec: number;
   /** Ghi video đầy đủ 15 khung/giây trong lúc chụp (lưu timelapse.mp4 vào thư mục gallery của phiên). */
   timelapseEnabled: boolean;
+  /** Thử nghiệm: cho khách chọn làm mịn da ở bước 8. Chỉ áp cho ảnh xem trước, CHƯA áp vào bản in. */
+  skinSmoothEnabled: boolean;
 }
 
 /** Các cài đặt dạng số (chỉnh bằng ô nhập số trong admin). */
-export type NumericSettingKey = Exclude<keyof KioskSettings, 'timelapseEnabled'>;
+export type NumericSettingKey = Exclude<keyof KioskSettings, 'timelapseEnabled' | 'skinSmoothEnabled'>;
 
 export const DEFAULT_KIOSK_SETTINGS: KioskSettings = {
   remoteCaptureTimeoutSec: 180,
@@ -26,6 +28,7 @@ export const DEFAULT_KIOSK_SETTINGS: KioskSettings = {
   filterTimeoutSec: 60,
   selectTimeoutSec: 180,
   timelapseEnabled: true,
+  skinSmoothEnabled: false,
 };
 
 const LIMITS: Record<NumericSettingKey, [number, number]> = {
@@ -41,6 +44,7 @@ const STORAGE_KEY = 'favori.kioskSettings';
 function sanitize(raw: Partial<Record<keyof KioskSettings, unknown>>): KioskSettings {
   const result = { ...DEFAULT_KIOSK_SETTINGS };
   if (typeof raw.timelapseEnabled === 'boolean') result.timelapseEnabled = raw.timelapseEnabled;
+  if (typeof raw.skinSmoothEnabled === 'boolean') result.skinSmoothEnabled = raw.skinSmoothEnabled;
   (Object.keys(LIMITS) as NumericSettingKey[]).forEach((key) => {
     const value = Number(raw[key]);
     if (Number.isFinite(value)) {

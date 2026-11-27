@@ -18,8 +18,9 @@ public static class UploadMediaPreparer
     /// <summary>
     /// Thu nhỏ để cạnh dài không quá <paramref name="maxSide"/> (không phóng to), áp hướng xoay EXIF vào điểm ảnh,
     /// rồi ghi JPEG mới. Skia không chép metadata nên EXIF/GPS của ảnh gốc bị bỏ.
+    /// <paramref name="process"/> (nếu có) sửa điểm ảnh sau khi đã thu nhỏ và xoay đúng chiều, trước khi mã hoá (vd. áp bộ lọc màu).
     /// </summary>
-    public static void WriteResizedJpeg(string source, string target, int maxSide, int quality)
+    public static void WriteResizedJpeg(string source, string target, int maxSide, int quality, Action<SKBitmap>? process = null)
     {
         using var codec = SKCodec.Create(source) ?? throw new InvalidDataException($"Không đọc được ảnh: {source}");
         var info = codec.Info;
@@ -42,6 +43,7 @@ public static class UploadMediaPreparer
                 new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear));
 
         using var oriented = ApplyOrigin(resized, codec.EncodedOrigin);
+        process?.Invoke(oriented);
         using var image = SKImage.FromBitmap(oriented);
         using var data = image.Encode(SKEncodedImageFormat.Jpeg, quality)
             ?? throw new InvalidDataException("Mã hoá JPEG thất bại");

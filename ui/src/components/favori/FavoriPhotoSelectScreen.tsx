@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FavoriLayout } from './FavoriLayout';
 import { FilteredImage } from './FilteredImage';
+import type { SkinLevel } from '../../services/skin';
 import { backendApi, type FilterOption, type FrameOption, type HoleRectDto, type LayoutOption } from '../../services/backendApi';
 import { useCountdown } from '../../hooks/useCountdown';
 import {
@@ -16,6 +17,8 @@ interface FavoriPhotoSelectScreenProps {
   layout?: LayoutOption;
   /** Bộ lọc đang chọn (màu CSS hoặc LUT). */
   filter?: FilterOption;
+  /** Mức làm mịn da đã chọn ở bước 8 (thử nghiệm). */
+  skin?: SkinLevel;
   timeoutSec?: number;
   /** Quay về bước chọn bộ lọc. */
   onBack?: () => void;
@@ -65,6 +68,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
   frameObj,
   layout,
   filter,
+  skin = 'off',
   timeoutSec = 180,
   onBack,
   onConfirm,
@@ -272,6 +276,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
                   <FilteredImage
                     src={photo}
                     filter={filter}
+                    skin={skin}
                     alt=""
                     onLoad={(e) => rememberAspect(pIdx, e.currentTarget)}
                     className="w-full h-full object-cover"
@@ -298,6 +303,7 @@ export const FavoriPhotoSelectScreen: React.FC<FavoriPhotoSelectScreenProps> = (
                     <FilteredImage
                       src={photo}
                       filter={filter}
+                      skin={skin}
                       alt=""
                       draggable={false}
                       onLoad={(e) => photoIndex !== null && rememberAspect(photoIndex, e.currentTarget)}

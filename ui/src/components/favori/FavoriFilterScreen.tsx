@@ -6,6 +6,7 @@ import { useCountdown } from '../../hooks/useCountdown';
 import { FilteredImage } from './FilteredImage';
 import { ipc } from '../../services/ipc';
 import { warmLutPreviews } from '../../services/lut';
+import { smoothSkinImage, SKIN_LEVEL_LABELS, type SkinLevel } from '../../services/skin';
 
 export type { FilterOption };
 
@@ -15,6 +16,10 @@ interface FavoriFilterScreenProps {
   onSelectFilter: (id: string, filterObj?: FilterOption) => void;
   timeoutSec?: number;
   onNext: () => void;
+  /** Thử nghiệm: hiện lựa chọn làm mịn da (bật trong Admin). */
+  skinEnabled?: boolean;
+  skin?: SkinLevel;
+  onSelectSkin?: (level: SkinLevel) => void;
 }
 
 /** Nhãn ngắn cho nút tròn: "Ảnh Gốc (Natural)" -> "Gốc", "Đen Trắng Cổ Điển (Classic B&W)" -> "Đen Trắng Cổ Điển". */
@@ -29,6 +34,9 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
   onSelectFilter,
   timeoutSec = 60,
   onNext,
+  skinEnabled = false,
+  skin = 'off',
+  onSelectSkin,
 }) => {
   const [filters, setFilters] = useState<FilterOption[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -69,8 +77,18 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
     if (filters.length === 0 || photos.length === 0) return;
     const sel = selectedRef.current;
     const ordered = [...filters].sort((a, b) => Number(b.id === sel || b.code === sel) - Number(a.id === sel || a.code === sel));
-    return warmLutPreviews(photos, ordered);
-  }, [filters, photos]);
+    // Đã chọn làm mịn da thì tính LUT trên ảnh đã làm mịn (cùng khoá bộ nhớ đệm với màn hình hiển thị)
+    let stopWarm: () => void = () => undefined;
+    let cancelled = false;
+    (async () => {
+      const base = skin === 'off' ? photos : await Promise.all(photos.map((p) => smoothSkinImage(p, skin)));
+      if (!cancelled) stopWarm = warmLutPreviews(base, ordered);
+    })();
+    return () => {
+      cancelled = true;
+      stopWarm();
+    };
+  }, [filters, photos, skin]);
 
   const activeFilter = filters.find((f) => f.id === selectedFilter || f.code === selectedFilter);
 
@@ -86,6 +104,7 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
                   <FilteredImage
                     src={photo}
                     filter={activeFilter}
+                    skin={skin}
                     alt={`Ảnh ${pIdx + 1}`}
                     className="w-full h-full object-cover transition-[filter] duration-300"
                   />
@@ -99,8 +118,31 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
           )}
         </div>
 
-        {/* Lưới nút lọc tròn */}
-        <div className="w-[26rem] flex-shrink-0 max-h-full overflow-y-auto py-2 self-center">
+        {/* Cột bên phải: (thử nghiệm) làm mịn da, rồi lưới nút lọc tròn */}
+        <div className="w-[26rem] flex-shrink-0 max-h-full flex flex-col gap-6 py-2 self-center">
+          {skinEnabled && (
+            <div className="flex flex-col items-center gap-2">
+              <span className="font-lobster text-2xl text-[#1f1610]">Làm mịn da</span>
+              <div className="flex gap-3">
+                {(Object.keys(SKIN_LEVEL_LABELS) as SkinLevel[]).map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    onClick={() => onSelectSkin?.(level)}
+                    aria-pressed={skin === level}
+                    className={`min-w-[5.5rem] px-4 py-3 rounded-full border-2 text-base font-bold cursor-pointer transition-all duration-200 active:scale-95 ${
+                      skin === level
+                        ? 'bg-[#b00012] border-[#b00012] text-white shadow-lg'
+                        : 'bg-white/70 border-[#7a0000] text-[#7a0000]'
+                    }`}
+                  >
+                    {SKIN_LEVEL_LABELS[level]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="min-h-0 overflow-y-auto">
           {loading ? (
             <div className="flex flex-col items-center justify-center py-16 space-y-3">
               <Loader2 className="w-8 h-8 animate-spin text-[#7a0000]" />
@@ -129,6 +171,7 @@ export const FavoriFilterScreen: React.FC<FavoriFilterScreenProps> = ({
               })}
             </div>
           )}
+          </div>
         </div>
       </div>
     </FavoriLayout>
